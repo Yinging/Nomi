@@ -1,4 +1,5 @@
 import type { AppContext } from "../types";
+import { getPlatform } from "../platform/current-platform.js";
 
 export type DevPublicBypassState = {
 	enabled: boolean;
@@ -62,7 +63,8 @@ function readLoopbackHostFromContext(c: AppContext): string {
 
 export function resolveDevPublicBypassFromContext(c: AppContext): DevPublicBypassState | null {
 	// single-user mode: NOMI_SINGLE_USER_MODE enables loopback auth bypass
-	const enabled = readEnvBool(c.env, "NOMI_SINGLE_USER_MODE");
+	// Primary check via Platform abstraction; fall back to env-var read for compatibility.
+	const enabled = getPlatform().identityMode === 'single-user' || readEnvBool(c.env, "NOMI_SINGLE_USER_MODE");
 	if (!enabled) return null;
 
 	const secret = readEnvString(c.env, "NOMI_SINGLE_USER_SECRET");

@@ -1,4 +1,5 @@
 import type { AppContext } from "../../types";
+import { getPlatform } from "../../platform/current-platform.js";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { fetchWithHttpDebugLog } from "../../httpDebugLog";
 import { AppError } from "../../middleware/error";
@@ -754,8 +755,8 @@ export async function hostTaskAssetsInWorker(options: {
 		if (cachedStorage) return cachedStorage;
 		// Desktop 本地存储模式（优先于 S3/RustFS）
 		const localRoot = String((c.env as any)?.ASSET_LOCAL_ROOT || process.env.ASSET_LOCAL_ROOT || "").trim();
-		const localMode = String((c.env as any)?.ASSET_HOSTING_LOCAL_MODE || process.env.ASSET_HOSTING_LOCAL_MODE || "").trim();
-		if ((localMode === "1" || localMode === "true") && localRoot) {
+		const isLocal = getPlatform().assetStorage === 'local';
+		if (isLocal && localRoot) {
 			cachedStorage = { kind: "local", root: localRoot };
 			return cachedStorage;
 		}

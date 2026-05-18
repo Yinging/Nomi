@@ -1,4 +1,5 @@
 import type { PrismaClient } from "../types";
+import { getPlatform } from "../platform/current-platform.js";
 
 export type DbClient = {
 	db: PrismaClient;
@@ -14,7 +15,7 @@ type TableInfoRow = {
 };
 
 function isLibSqlMode(): boolean {
-	return String(process.env.PRISMA_DB_PROVIDER || "").trim() === "libsql";
+	return getPlatform().dbProvider === 'libsql';
 }
 
 function replaceSqliteJsonExtract(sql: string): string {
