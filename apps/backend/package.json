@@ -9,7 +9,7 @@
     "build": "node scripts/build.mjs",
     "import:ai-character-library": "node scripts/import-ai-character-library.mjs",
     "prisma:generate": "prisma generate",
-    "prisma:generate:desktop": "prisma generate --schema=prisma/schema.desktop.prisma",
+    "prisma:generate:desktop": "prisma generate",
     "postinstall": "prisma generate",
     "start": "node dist/main.js",
     "smoke:project-chapter": "node scripts/project-chapter-smoke.mjs",

@@ -20,14 +20,14 @@ function findPrismaCliPath(): string {
 
 function findDesktopSchemaPath(): string {
   const candidates = [
-    path.join(process.resourcesPath || '', 'prisma', 'schema.desktop.prisma'),
-    path.resolve(__dirname, '../../../backend/prisma/schema.desktop.prisma'),
+    path.join(process.resourcesPath || '', 'prisma', 'schema.prisma'),
+    path.resolve(__dirname, '../../../backend/prisma/schema.prisma'),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
   throw new Error(
-    'Cannot find schema.desktop.prisma. ' +
+    'Cannot find schema.prisma. ' +
     'Searched: ' + candidates.join(', ')
   );
 }
