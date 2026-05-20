@@ -20,10 +20,12 @@ Create a Pages project from GitHub:
 - Repository: `aqm857886159/Nomi`
 - Production branch: `main`
 - Framework preset: `None`
-- Build command: `pnpm run build`
-- Build output directory: `site`
+- Build command: `pnpm run build:site`
+- Build output directory: `marketing`
 
-The root `pnpm run build` command is intentionally scoped to the static marketing site so Cloudflare Pages can deploy without application runtime environment variables. Use `pnpm run build:app` when you need to build the full Nomi application.
+`pnpm run build:site` validates the static marketing files exist without triggering
+the full desktop/API build chain. Use `pnpm run build:app` when you need to build
+the full Nomi application.
 
 If the Cloudflare project has a deploy command configured, use:
 

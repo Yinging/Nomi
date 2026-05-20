@@ -1,6 +1,9 @@
 name = "nomi"
 compatibility_date = "2026-05-04"
 
+[build]
+command = "pnpm run build:site"
+
 [assets]
 directory = "./marketing"
 html_handling = "auto-trailing-slash"
