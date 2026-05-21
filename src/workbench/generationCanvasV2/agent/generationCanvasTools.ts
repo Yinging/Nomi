@@ -1,4 +1,5 @@
 import type { GenerationCanvasEdge, GenerationCanvasNode, GenerationNodeKind } from '../model/generationCanvasTypes'
+import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import { useWorkbenchStore } from '../../workbenchStore'
 import { collectNodeContext } from '../model/nodeContext'
 import { runGenerationNode } from '../runner/generationRunController'
@@ -149,8 +150,8 @@ export const generationCanvasTools = {
       const node = findNode(action.nodeId)
       if (!node) return toolResult({ ok: false, tool: action.tool, message: '未找到节点', error: 'node_not_found' })
       const expectedKind = action.tool === 'generate_image' ? 'image' : 'video'
-      if (node.kind !== expectedKind) {
-        return toolResult({ ok: false, tool: action.tool, message: `当前工具需要 ${expectedKind} 节点`, error: 'kind_mismatch', data: node })
+      if (getGenerationNodeExecutionKind(node.kind) !== expectedKind) {
+        return toolResult({ ok: false, tool: action.tool, message: `当前工具需要可执行的 ${expectedKind} 节点`, error: 'kind_mismatch', data: node })
       }
       if (!action.confirmed) {
         return toolResult({

@@ -1,22 +1,28 @@
 import React from 'react'
 import { IconGrid3x3, IconLayoutGrid, IconMaximize, IconUpload } from '@tabler/icons-react'
-import { cn } from '../../../../utils/cn'
-import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
-import { useWorkbenchStore } from '../../../workbenchStore'
-import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
+import { cn } from '../../../utils/cn'
+import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import { useWorkbenchStore } from '../../workbenchStore'
+import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import {
   encodeTimelineGenerationNodeDragPayload,
   TIMELINE_GENERATION_NODE_DRAG_MIME,
-} from '../../../timeline/timelineDragPayload'
-import { clientXToFrame } from '../../../timeline/timelineEdit'
-import { buildClipFromGenerationNode } from '../../model/buildClipFromGenerationNode'
-import { canRunGenerationNode, rerunGenerationNodeAsNewNode, runGenerationNode } from '../../runner/generationRunController'
-import { WorkbenchButton } from '../../../../design'
+} from '../../timeline/timelineDragPayload'
+import { clientXToFrame } from '../../timeline/timelineEdit'
+import { buildClipFromGenerationNode } from '../model/buildClipFromGenerationNode'
+import { canRunGenerationNode, rerunGenerationNodeAsNewNode, runGenerationNode } from '../runner/generationRunController'
+import { WorkbenchButton } from '../../../design'
 import NodeParameterControls from './NodeParameterControls'
-import { buildVideoPlaybackUrl } from '../../../../media/videoPlaybackUrl'
-import { diagnoseVideoPlaybackFailure, logVideoPlaybackFailure } from '../../../../media/videoPlaybackDiagnostics'
+import { buildVideoPlaybackUrl } from '../../../media/videoPlaybackUrl'
+import { diagnoseVideoPlaybackFailure, logVideoPlaybackFailure } from '../../../media/videoPlaybackDiagnostics'
 import PanoramaViewer, { type PanoramaScreenshot } from './PanoramaViewer'
-import { persistActiveWorkbenchProjectNow } from '../../../project/workbenchProjectSession'
+import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
+import {
+  getGenerationNodeExecutionKind,
+  getGenerationNodePromptPlaceholder,
+  isImageLikeGenerationNodeKind,
+  isVideoLikeGenerationNodeKind,
+} from '../model/generationNodeKinds'
 
 const STATUS_LABEL: Record<string, string> = {
   queued: '排队中',
@@ -24,7 +30,7 @@ const STATUS_LABEL: Record<string, string> = {
   error: '生成失败',
 }
 
-type BaseGenerationNodeProps = {
+export type BaseGenerationNodeProps = {
   node: GenerationCanvasNode
   selected: boolean
   readOnly?: boolean
@@ -479,6 +485,7 @@ export default function BaseGenerationNode({ node, selected, readOnly = false }:
   const canSendToTimeline = hasResult && status !== 'error'
   const showStatusBadge = status === 'queued' || status === 'running' || status === 'error'
   const composerLayout = floatingComposerLayout(visualSize.width, visualSize.height, node.kind)
+  const nodeExecutionKind = getGenerationNodeExecutionKind(node.kind)
   const handlePanoramaScreenshot = React.useCallback((screenshot: PanoramaScreenshot) => {
     const { dataUrl, dimensions } = screenshot
     const createdAt = Date.now()
@@ -617,27 +624,30 @@ export default function BaseGenerationNode({ node, selected, readOnly = false }:
           <WorkbenchButton
             className={cn(
               'generation-canvas-v2-node__handle generation-canvas-v2-node__handle--input',
-              'absolute top-1/2 left-[-8px] w-4 h-4 p-0',
-              'border-2 border-workbench-surface-solid rounded-full',
-              'bg-workbench-muted-soft -translate-y-1/2 cursor-crosshair',
-              'opacity-0 transition-opacity duration-150',
-              'data-[active=true]:bg-workbench-accent data-[active=true]:opacity-100',
+              'absolute top-1/2 left-[-14px] inline-grid w-7 h-7 place-items-center p-0',
+              'border-0 rounded-full bg-transparent -translate-y-1/2 cursor-crosshair',
+              'opacity-80 transition-opacity duration-150 hover:opacity-100',
+              'data-[active=true]:opacity-100',
             )}
             aria-label="连接到此节点"
             data-active={pendingConnectionSourceId && pendingConnectionSourceId !== node.id ? 'true' : 'false'}
+            onPointerDown={(event) => {
+              event.stopPropagation()
+            }}
             onClick={(event) => {
               event.stopPropagation()
               connectToNode(node.id)
             }}
-          />
+          >
+            <span className="generation-canvas-v2-node__handle-dot" aria-hidden="true" />
+          </WorkbenchButton>
           <WorkbenchButton
             className={cn(
               'generation-canvas-v2-node__handle generation-canvas-v2-node__handle--output',
-              'absolute top-1/2 right-[-8px] w-4 h-4 p-0',
-              'border-2 border-workbench-surface-solid rounded-full',
-              'bg-workbench-muted-soft -translate-y-1/2 cursor-crosshair',
-              'opacity-0 transition-opacity duration-150',
-              'data-[active=true]:bg-workbench-accent data-[active=true]:opacity-100',
+              'absolute top-1/2 right-[-14px] inline-grid w-7 h-7 place-items-center p-0',
+              'border-0 rounded-full bg-transparent -translate-y-1/2 cursor-crosshair',
+              'opacity-80 transition-opacity duration-150 hover:opacity-100',
+              'data-[active=true]:opacity-100',
             )}
             aria-label="从此节点开始连线"
             data-active={pendingConnectionSourceId === node.id ? 'true' : 'false'}
@@ -649,7 +659,9 @@ export default function BaseGenerationNode({ node, selected, readOnly = false }:
               }
               startConnection(node.id)
             }}
-          />
+          >
+            <span className="generation-canvas-v2-node__handle-dot" aria-hidden="true" />
+          </WorkbenchButton>
         </>
       ) : null}
 
@@ -906,7 +918,7 @@ export default function BaseGenerationNode({ node, selected, readOnly = false }:
           onPointerDown={(event) => event.stopPropagation()}
         >
           <>
-            {node.kind === 'video' || node.kind === 'image' || node.kind === 'keyframe' || node.kind === 'character' || node.kind === 'scene' ? (
+            {isImageLikeGenerationNodeKind(node.kind) || isVideoLikeGenerationNodeKind(node.kind) ? (
                 <NodeParameterControls node={node} section="references" valueOnly />
               ) : null}
               <textarea
@@ -918,13 +930,7 @@ export default function BaseGenerationNode({ node, selected, readOnly = false }:
                 )}
                 value={node.prompt}
                 rows={composerLayout.promptRows}
-                placeholder={
-                  node.kind === 'video'
-                    ? '描述这一段视频的镜头、动作和节奏...'
-                    : node.kind === 'text'
-                      ? '输入文本内容...'
-                      : '描述这一帧的画面...'
-                }
+                placeholder={getGenerationNodePromptPlaceholder(node.kind)}
                 onChange={(event) => updateNode(node.id, { prompt: event.currentTarget.value })}
                 onBlur={() => { void persistActiveWorkbenchProjectNow().catch(() => {}) }}
               />
@@ -943,9 +949,9 @@ export default function BaseGenerationNode({ node, selected, readOnly = false }:
                 <NodeParameterControls node={node} section="parameters" valueOnly />
                 {(() => {
                   const disabledReason = !canGenerate && !isGenerating
-                    ? node.kind === 'video'
+                    ? nodeExecutionKind === 'video'
                       ? '需要先连接一个图片节点作为首帧'
-                      : node.kind === 'image'
+                      : nodeExecutionKind === 'image'
                         ? undefined
                         : `「${node.kind}」类型暂不支持直接生成`
                     : undefined

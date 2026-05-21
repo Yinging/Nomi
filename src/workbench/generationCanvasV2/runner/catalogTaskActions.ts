@@ -16,6 +16,11 @@ import type {
   GenerationNodeResult,
   GenerationResultType,
 } from '../model/generationCanvasTypes'
+import {
+  getGenerationNodeCatalogKind,
+  getGenerationNodeExecutionKind,
+  isVideoLikeGenerationNodeKind,
+} from '../model/generationNodeKinds'
 import type { ResolvedGenerationReferences } from './generationReferenceResolver'
 
 export type CatalogTaskActionOptions = {
@@ -33,7 +38,6 @@ export type CatalogTaskActionOptions = {
   pollTimeoutMs?: number
 }
 
-const IMAGE_NODE_KINDS = new Set(['image', 'keyframe', 'character', 'scene'])
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed'])
 
 function asTrimmedString(value: unknown): string {
@@ -80,7 +84,7 @@ function normalizedModelIdentifier(value: string): string {
 }
 
 function catalogKindForNode(node: GenerationCanvasNode): BillingModelKind {
-  return node.kind === 'video' ? 'video' : 'image'
+  return getGenerationNodeCatalogKind(node.kind)
 }
 
 function modelMatchesIdentifier(model: ModelCatalogModelDto, identifier: string): boolean {
@@ -130,7 +134,7 @@ async function resolveExecutableNodeFromCatalog(
       modelVendor: resolvedVendor,
       vendor: resolvedVendor,
       modelLabel: asTrimmedString(match.labelZh) || modelKey,
-      ...(node.kind === 'video'
+      ...(isVideoLikeGenerationNodeKind(node.kind)
         ? { videoModel: asTrimmedString(match.modelKey) || modelKey, videoModelVendor: resolvedVendor }
         : { imageModel: asTrimmedString(match.modelKey) || modelKey, imageModelVendor: resolvedVendor }),
     },
@@ -138,7 +142,8 @@ async function resolveExecutableNodeFromCatalog(
 }
 
 function resolveTaskKind(node: GenerationCanvasNode, references: Partial<ResolvedGenerationReferences>): TaskKind {
-  if (node.kind === 'video') {
+  const executionKind = getGenerationNodeExecutionKind(node.kind)
+  if (executionKind === 'video') {
     const hasFrame = Boolean(
       asTrimmedString(references.firstFrameUrl) ||
       asTrimmedString(references.lastFrameUrl) ||
@@ -146,7 +151,7 @@ function resolveTaskKind(node: GenerationCanvasNode, references: Partial<Resolve
     )
     return hasFrame ? 'image_to_video' : 'text_to_video'
   }
-  if (IMAGE_NODE_KINDS.has(node.kind)) {
+  if (executionKind === 'image') {
     const hasReference = (references.referenceImages?.length || 0) > 0
     return hasReference ? 'image_edit' : 'text_to_image'
   }

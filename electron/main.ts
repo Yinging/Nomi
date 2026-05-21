@@ -47,6 +47,8 @@ protocol.registerSchemesAsPrivileged([
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL || process.env.NOMI_DESKTOP_DEV);
 const devRemoteDebuggingPort = process.env.NOMI_DESKTOP_REMOTE_DEBUGGING_PORT;
+const DEV_RENDERER_LOAD_ATTEMPTS = 20;
+const DEV_RENDERER_LOAD_RETRY_MS = 500;
 
 if (isDev && devRemoteDebuggingPort) {
   app.commandLine.appendSwitch("remote-debugging-port", devRemoteDebuggingPort);
@@ -85,6 +87,30 @@ function getRendererUrl(): string {
   return pathToFileURL(path.join(__dirname, "../dist/index.html")).toString();
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function loadRendererWithRetry(mainWindow: BrowserWindow, rendererUrl: string): Promise<void> {
+  const attempts = isDev ? DEV_RENDERER_LOAD_ATTEMPTS : 1;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await mainWindow.loadURL(rendererUrl);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isDev || mainWindow.isDestroyed() || attempt === attempts) break;
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[nomi:desktop] renderer load attempt ${attempt}/${attempts} failed: ${message}`);
+      await wait(DEV_RENDERER_LOAD_RETRY_MS);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 async function createWindow(): Promise<void> {
   const mainWindow = new BrowserWindow({
     width: 1440,
@@ -103,7 +129,7 @@ async function createWindow(): Promise<void> {
 
   const rendererUrl = getRendererUrl();
   registerDevDiagnostics(mainWindow, rendererUrl);
-  await mainWindow.loadURL(rendererUrl);
+  await loadRendererWithRetry(mainWindow, rendererUrl);
 
   if (isDev) {
     mainWindow.webContents.openDevTools({ mode: "detach" });
@@ -181,8 +207,15 @@ app.whenReady().then(async () => {
   await createWindow();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      void createWindow().catch((error) => {
+        console.error("[nomi:desktop] failed to recreate window:", error);
+      });
+    }
   });
+}).catch((error) => {
+  console.error("[nomi:desktop] failed to start:", error);
+  app.quit();
 });
 
 app.on("window-all-closed", () => {

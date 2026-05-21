@@ -9,6 +9,7 @@ import {
   rollbackNodeHistory,
   upsertNode,
 } from '../model/graphOps'
+import { isGenerationNodeKind, isImageLikeGenerationNodeKind } from '../model/generationNodeKinds'
 import type {
   GenerationCanvasEdge,
   GenerationCanvasNode,
@@ -264,11 +265,6 @@ function createProgress(progress: NodeProgressInput, fallbackRunId?: string): Ge
     percent,
     updatedAt: progress.updatedAt ?? Date.now(),
   }
-}
-
-function isGenerationNodeKind(value: unknown): value is GenerationNodeKind {
-  return typeof value === 'string'
-    && ['text', 'character', 'scene', 'image', 'keyframe', 'video', 'shot', 'output', 'panorama'].includes(value)
 }
 
 function normalizeGenerationCanvasSnapshot(input: unknown): GenerationCanvasSnapshot {
@@ -574,11 +570,10 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
     const sourceNodeId = get().pendingConnectionSourceId
     if (!sourceNodeId) return
     set((state) => {
-      const IMAGE_LIKE_KINDS = new Set(['image', 'keyframe', 'character', 'scene'])
       const sourceNode = state.nodes.find((n) => n.id === sourceNodeId)
       const targetNode = state.nodes.find((n) => n.id === targetNodeId)
       let mode: GenerationCanvasEdge['mode'] = 'reference'
-      if (sourceNode && targetNode && IMAGE_LIKE_KINDS.has(sourceNode.kind) && targetNode.kind === 'video') {
+      if (sourceNode && targetNode && isImageLikeGenerationNodeKind(sourceNode.kind) && targetNode.kind === 'video') {
         const incoming = state.edges.filter((e) => e.target === targetNodeId)
         if (!incoming.some((e) => e.mode === 'first_frame')) mode = 'first_frame'
         else if (!incoming.some((e) => e.mode === 'last_frame')) mode = 'last_frame'

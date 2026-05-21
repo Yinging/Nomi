@@ -1,13 +1,6 @@
-export type GenerationNodeKind =
-  | 'text'
-  | 'character'
-  | 'scene'
-  | 'image'
-  | 'keyframe'
-  | 'video'
-  | 'shot'
-  | 'output'
-  | 'panorama'
+import type { GenerationNodeKind } from './generationNodeKinds'
+
+export type { GenerationNodeKind } from './generationNodeKinds'
 
 export type GenerationNodeStatus = 'idle' | 'queued' | 'running' | 'success' | 'error'
 

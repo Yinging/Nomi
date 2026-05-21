@@ -1,4 +1,5 @@
 import type { GenerationCanvasEdge, GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
+import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { generationNodeExecutor, type GenerationNodeExecutor } from './generationNodeExecutor'
@@ -139,8 +140,9 @@ export function canRunGenerationNode(
   context: GenerationRunContext = {},
 ): boolean {
   if (!node) return false
-  if (node.kind === 'image') return true
-  if (node.kind !== 'video') return false
+  const executionKind = getGenerationNodeExecutionKind(node.kind)
+  if (executionKind === 'image') return true
+  if (executionKind !== 'video') return false
   if (!('id' in node) || !node.id) return false
   const references = resolveGenerationReferences(node, context)
   return Boolean(

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { generationNodeKindSchema } from '../model/generationCanvasSchema'
+import { getGenerationNodeDefaultTitle } from '../model/generationNodeKinds'
 import type { GenerationCanvasEdge, GenerationNodeKind } from '../model/generationCanvasTypes'
 import type { CreateGenerationNodeToolInput } from './generationCanvasTools'
 
@@ -76,7 +77,7 @@ export function parseGenerationCanvasAgentPlan(text: string): GenerationCanvasAg
 export function toCreateNodeInputs(plan: GenerationCanvasAgentPlan): CreateGenerationNodeToolInput[] {
   return plan.nodes.map((node, index) => ({
     kind: node.kind,
-    title: node.title || (node.kind === 'video' ? `视频 ${index + 1}` : node.kind === 'image' ? `图片 ${index + 1}` : `节点 ${index + 1}`),
+    title: node.title || `${getGenerationNodeDefaultTitle(node.kind)} ${index + 1}`,
     prompt: node.prompt || '',
     position: node.position || { x: 160 + index * 340, y: 260 + (index % 2) * 220 },
   }))

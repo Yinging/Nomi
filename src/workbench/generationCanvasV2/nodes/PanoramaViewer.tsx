@@ -2,8 +2,8 @@ import React from 'react'
 import { createPortal } from 'react-dom'
 import ReactPannellum, { usePannellum } from 'react-pannellum'
 import { IconCamera, IconX } from '@tabler/icons-react'
-import { cn } from '../../../../utils/cn'
-import { WorkbenchIconButton } from '../../../../design'
+import { cn } from '../../../utils/cn'
+import { WorkbenchIconButton } from '../../../design'
 
 export type PanoramaScreenshot = {
   dataUrl: string

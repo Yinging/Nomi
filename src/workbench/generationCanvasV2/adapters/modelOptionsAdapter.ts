@@ -14,6 +14,7 @@ import {
 import { normalizeOrientation, type Orientation } from '../../../utils/orientation'
 import type { ModelOption, NodeKind } from '../../../config/models'
 import type { GenerationCanvasNode, GenerationNodeKind } from '../model/generationCanvasTypes'
+import { getGenerationNodeCatalogKind, isVideoLikeGenerationNodeKind } from '../model/generationNodeKinds'
 
 export function findModelOptionByIdentifier(
   options: readonly ModelOption[],
@@ -50,9 +51,7 @@ export function deriveGenerationModelCatalogStatus(kind: GenerationNodeKind, sta
 }
 
 function toCatalogNodeKind(kind: GenerationNodeKind): NodeKind {
-  if (kind === 'video') return 'video'
-  if (kind === 'text' || kind === 'output' || kind === 'shot') return 'text'
-  return 'image'
+  return getGenerationNodeCatalogKind(kind)
 }
 
 export function resolveGenerationModelSelection(
@@ -96,7 +95,7 @@ export function updateNodeModelMeta(
     modelVendor: selection.vendor || null,
     vendor: selection.vendor || null,
     modelLabel: selection.modelLabel,
-    ...(node.kind === 'video'
+    ...(isVideoLikeGenerationNodeKind(node.kind)
       ? { videoModel: selection.modelValue || null, videoModelVendor: selection.vendor || null }
       : { imageModel: selection.modelValue || null, imageModelVendor: selection.vendor || null }),
   }

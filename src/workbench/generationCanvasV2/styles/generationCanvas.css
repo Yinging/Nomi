@@ -34,19 +34,43 @@
   overflow: visible;
 }
 
+.generation-canvas-v2__nodes {
+  pointer-events: none;
+}
+
+.generation-canvas-v2-node {
+  pointer-events: auto;
+}
+
 .generation-canvas-v2__edge-path {
   fill: none;
   stroke: var(--nomi-ink-30);
   stroke-dasharray: 3 3;
   stroke-width: 1.2;
+  pointer-events: none;
 }
 
 .generation-canvas-v2__edge-hit {
   fill: none;
-  stroke: transparent;
-  stroke-width: 18;
+  stroke: rgba(18, 24, 38, 0.001);
+  stroke-width: 30;
   pointer-events: stroke;
   cursor: pointer;
+}
+
+.generation-canvas-v2__edge-hit:focus,
+.generation-canvas-v2__edge-hit:focus-visible {
+  outline: none;
+}
+
+.generation-canvas-v2__edge[data-active='true'] .generation-canvas-v2__edge-path {
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px rgba(18, 24, 38, 0.14));
+}
+
+.generation-canvas-v2__edge-cut-object {
+  overflow: visible;
+  pointer-events: all;
 }
 
 .generation-canvas-v2__edge-preview {
@@ -100,6 +124,26 @@
 .generation-canvas-v2__edge-cut:hover {
   background: var(--workbench-danger);
   color: var(--nomi-paper);
+}
+
+.generation-canvas-v2-node__handle {
+  pointer-events: auto;
+}
+
+.generation-canvas-v2-node__handle-dot {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--workbench-surface-solid);
+  border-radius: 999px;
+  background: var(--workbench-muted-soft);
+  box-shadow: 0 4px 12px rgba(18, 24, 38, 0.14);
+  transition: transform 150ms ease, background 150ms ease, opacity 150ms ease;
+}
+
+.generation-canvas-v2-node__handle:hover .generation-canvas-v2-node__handle-dot,
+.generation-canvas-v2-node__handle[data-active='true'] .generation-canvas-v2-node__handle-dot {
+  background: var(--workbench-accent);
+  transform: scale(1.08);
 }
 
 .generation-canvas-v2-assistant {

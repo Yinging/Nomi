@@ -1,18 +1,21 @@
 import { z } from 'zod'
+import { GENERATION_NODE_KINDS } from './generationNodeKinds'
 
-export const generationNodeKindSchema = z.enum([
-  'text',
-  'character',
-  'scene',
-  'image',
-  'keyframe',
-  'video',
-  'shot',
-  'output',
-  'panorama',
-])
+export const generationNodeKindSchema = z.enum(GENERATION_NODE_KINDS)
 
 export const generationNodeStatusSchema = z.enum(['idle', 'queued', 'running', 'success', 'error'])
+export const generationNodeTaskKindSchema = z.enum(['text', 'image', 'video', 'workflow', 'asset', 'unknown'])
+export const generationNodeRunStatusSchema = z.enum(['queued', 'running', 'success', 'error', 'cancelled'])
+
+export const generationNodeProgressSchema = z.object({
+  runId: z.string().optional(),
+  taskId: z.string().optional(),
+  taskKind: generationNodeTaskKindSchema.optional(),
+  phase: z.string().optional(),
+  message: z.string().optional(),
+  percent: z.number().optional(),
+  updatedAt: z.number(),
+})
 
 export const generationNodeResultSchema = z.object({
   id: z.string().min(1),
@@ -21,7 +24,30 @@ export const generationNodeResultSchema = z.object({
   thumbnailUrl: z.string().optional(),
   text: z.string().optional(),
   model: z.string().optional(),
+  durationSeconds: z.number().optional(),
+  taskId: z.string().optional(),
+  taskKind: generationNodeTaskKindSchema.optional(),
+  assetId: z.string().optional(),
+  assetRefId: z.string().optional(),
+  raw: z.unknown().optional(),
   createdAt: z.number(),
+})
+
+export const generationNodeRunRecordSchema = z.object({
+  id: z.string().min(1),
+  status: generationNodeRunStatusSchema,
+  taskId: z.string().optional(),
+  taskKind: generationNodeTaskKindSchema.optional(),
+  assetId: z.string().optional(),
+  assetRefId: z.string().optional(),
+  progress: generationNodeProgressSchema.optional(),
+  resultId: z.string().optional(),
+  error: z.string().optional(),
+  raw: z.unknown().optional(),
+  startedAt: z.number(),
+  updatedAt: z.number(),
+  completedAt: z.number().optional(),
+  durationSeconds: z.number().optional(),
 })
 
 export const generationCanvasNodeSchema = z.object({
@@ -40,6 +66,8 @@ export const generationCanvasNodeSchema = z.object({
   references: z.array(z.string()).optional(),
   result: generationNodeResultSchema.optional(),
   history: z.array(generationNodeResultSchema).optional(),
+  progress: generationNodeProgressSchema.optional(),
+  runs: z.array(generationNodeRunRecordSchema).optional(),
   status: generationNodeStatusSchema.optional(),
   error: z.string().optional(),
   meta: z.record(z.unknown()).optional(),

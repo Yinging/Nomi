@@ -5,11 +5,11 @@ import { WorkbenchButton, WorkbenchIconButton } from '../../../design'
 import { toast } from '../../../ui/toast'
 import { cn } from '../../../utils/cn'
 import CanvasToolbar, { NodeAddMenu } from './CanvasToolbar'
-import BaseGenerationNode from './nodes/BaseGenerationNode'
 import { importImageFilesToGenerationCanvas } from '../adapters/assetImportAdapter'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { EDGE_MODE_LABEL } from '../model/graphOps'
 import type { GenerationCanvasNode, GenerationNodeKind } from '../model/generationCanvasTypes'
+import { getGenerationNodeComponent } from '../nodes/renderRegistry'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { notifyModelOptionsRefresh, useModelOptionsState } from '../../../config/useModelOptions'
 import '../styles/generationCanvas.css'
@@ -24,6 +24,11 @@ const WHEEL_PAGE_HEIGHT = 800
 
 type GenerationCanvasProps = {
   readOnly?: boolean
+}
+
+type ActiveEdge = {
+  id: string
+  position?: { x: number; y: number }
 }
 
 function readProviderSetting(key: 'apiKey' | 'baseUrl'): string {
@@ -175,7 +180,8 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
   } | null>(null)
   const [pendingCursorPos, setPendingCursorPos] = React.useState<{ x: number; y: number } | null>(null)
   const [isPanning, setIsPanning] = React.useState(false)
-  const [activeEdgeId, setActiveEdgeId] = React.useState<string | null>(null)
+  const [activeEdge, setActiveEdge] = React.useState<ActiveEdge | null>(null)
+  const activeEdgeId = activeEdge?.id ?? null
 
   React.useEffect(() => {
     markReady()
@@ -183,7 +189,7 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
 
   React.useEffect(() => {
     if (!activeEdgeId || edges.some((edge) => edge.id === activeEdgeId)) return
-    setActiveEdgeId(null)
+    setActiveEdge(null)
   }, [activeEdgeId, edges])
 
   // Refs so drag-connection effect can read latest values without re-subscribing
@@ -285,7 +291,7 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
       const key = event.key.toLowerCase()
       const mod = event.metaKey || event.ctrlKey
       if (event.key === 'Escape') {
-        setActiveEdgeId(null)
+        setActiveEdge(null)
         cancelConnection()
         return
       }
@@ -377,7 +383,7 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
 
   const handleStagePanStart = (event: React.PointerEvent<HTMLDivElement>) => {
     setContextNodeMenu(null)
-    setActiveEdgeId(null)
+    setActiveEdge(null)
     const target = event.target instanceof Element ? event.target : null
     if (target?.closest(
       '.generation-canvas-v2-node, .generation-canvas-v2-toolbar, .generation-canvas-v2__zoom-bar, .generation-canvas-v2__selection-toolbar, .generation-canvas-v2__edge-hit, .generation-canvas-v2__edge-cut, button, input, textarea, select, [role="menu"], [role="menuitem"]',
@@ -442,8 +448,17 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
     if (!activeEdgeId) return
     const target = event.target instanceof Element ? event.target : null
     if (target?.closest('.generation-canvas-v2__edge-hit, .generation-canvas-v2__edge-cut')) return
-    setActiveEdgeId(null)
+    setActiveEdge(null)
   }
+
+  const getCanvasPointFromClientPoint = React.useCallback((clientX: number, clientY: number) => {
+    if (!stageRef.current) return null
+    const rect = stageRef.current.getBoundingClientRect()
+    return {
+      x: (clientX - rect.left - offsetRef.current.x) / zoomRef.current,
+      y: (clientY - rect.top - offsetRef.current.y) / zoomRef.current,
+    }
+  }, [])
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault()
@@ -656,8 +671,9 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
                 const midY = (startY + endY) / 2
                 const path = `M ${startX} ${startY} C ${startX + control} ${startY}, ${endX - control} ${endY}, ${endX} ${endY}`
                 const isActiveEdge = activeEdgeId === edge.id
+                const cutPosition = isActiveEdge && activeEdge?.position ? activeEdge.position : { x: midX, y: midY }
                 return (
-                  <g key={edge.id} className="generation-canvas-v2__edge" data-mode={mode}>
+                  <g key={edge.id} className="generation-canvas-v2__edge" data-mode={mode} data-active={isActiveEdge ? 'true' : undefined}>
                     <path className="generation-canvas-v2__edge-path" d={path} />
                     {!readOnly ? (
                       <path
@@ -668,17 +684,20 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
                         aria-label={`选择连接线：${source.title} 到 ${target.title}`}
                         onPointerDown={(event) => {
                           event.stopPropagation()
-                          setActiveEdgeId(edge.id)
+                          setActiveEdge({
+                            id: edge.id,
+                            position: getCanvasPointFromClientPoint(event.clientX, event.clientY) ?? { x: midX, y: midY },
+                          })
                         }}
                         onKeyDown={(event) => {
                           if (event.key !== 'Enter' && event.key !== ' ') return
                           event.preventDefault()
-                          setActiveEdgeId(edge.id)
+                          setActiveEdge({ id: edge.id })
                         }}
                       />
                     ) : null}
                     {isActiveEdge && !readOnly ? (
-                      <foreignObject x={midX - 18} y={midY - 18} width="36" height="36">
+                      <foreignObject className="generation-canvas-v2__edge-cut-object" x={cutPosition.x - 18} y={cutPosition.y - 18} width="36" height="36">
                         <div className={cn('generation-canvas-v2__edge-cut-wrap', 'grid w-9 h-9 place-items-center pointer-events-auto')}>
                           <button
                             type="button"
@@ -695,7 +714,7 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
                             onClick={(event) => {
                               event.stopPropagation()
                               disconnectEdge(edge.id)
-                              setActiveEdgeId(null)
+                              setActiveEdge(null)
                             }}
                           >
                             <Scissors size={16} strokeWidth={2.2} aria-hidden="true" />
@@ -725,9 +744,14 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
               })()}
             </svg>
             <div className={cn('generation-canvas-v2__nodes', 'absolute top-0 left-0 w-[4000px] h-[3000px]')}>
-              {nodes.map((node) => (
-                <BaseGenerationNode key={node.id} node={node} selected={selectedSet.has(node.id)} readOnly={readOnly} />
-              ))}
+              <React.Suspense fallback={null}>
+                {nodes.map((node) => {
+                  const NodeComponent = getGenerationNodeComponent(node.kind)
+                  return (
+                    <NodeComponent key={node.id} node={node} selected={selectedSet.has(node.id)} readOnly={readOnly} />
+                  )
+                })}
+              </React.Suspense>
             </div>
             {selectedBounds && selectedCount > 1 && !readOnly ? (
               <div

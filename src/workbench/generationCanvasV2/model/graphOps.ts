@@ -1,4 +1,10 @@
 import type { GenerationCanvasEdge, GenerationCanvasEdgeMode, GenerationCanvasNode, GenerationNodeKind } from './generationCanvasTypes'
+import {
+  getGenerationNodeDefaultSize,
+  getGenerationNodeDefaultTitle,
+} from './generationNodeKinds'
+
+export { DEFAULT_NODE_SIZE, NODE_KIND_LABEL } from './generationNodeKinds'
 
 export const EDGE_MODE_LABEL: Record<GenerationCanvasEdgeMode, string> = {
   reference: '素材参考',
@@ -18,30 +24,6 @@ export const EDGE_MODE_ORDER: GenerationCanvasEdgeMode[] = [
   'composition_ref',
 ]
 
-export const DEFAULT_NODE_SIZE: Record<GenerationNodeKind, { width: number; height: number }> = {
-  text: { width: 280, height: 170 },
-  character: { width: 300, height: 190 },
-  scene: { width: 300, height: 190 },
-  image: { width: 340, height: 280 },
-  keyframe: { width: 320, height: 220 },
-  video: { width: 420, height: 340 },
-  shot: { width: 340, height: 230 },
-  output: { width: 280, height: 170 },
-  panorama: { width: 480, height: 270 },
-}
-
-export const NODE_KIND_LABEL: Record<GenerationNodeKind, string> = {
-  text: 'Text',
-  character: 'Character',
-  scene: 'Scene',
-  image: 'Image',
-  keyframe: 'Keyframe',
-  video: 'Video',
-  shot: 'Shot',
-  output: 'Output',
-  panorama: 'Panorama',
-}
-
 export function createGenerationNode(input: {
   id: string
   kind: GenerationNodeKind
@@ -50,11 +32,11 @@ export function createGenerationNode(input: {
   y?: number
   prompt?: string
 }): GenerationCanvasNode {
-  const size = DEFAULT_NODE_SIZE[input.kind]
+  const size = getGenerationNodeDefaultSize(input.kind)
   return {
     id: input.id,
     kind: input.kind,
-    title: input.title || NODE_KIND_LABEL[input.kind],
+    title: input.title || getGenerationNodeDefaultTitle(input.kind),
     position: { x: input.x ?? 120, y: input.y ?? 120 },
     size,
     prompt: input.prompt || '',

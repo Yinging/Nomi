@@ -1,4 +1,5 @@
 import type { GenerationCanvasEdge, GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
+import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import { generateImage } from './imageActions'
 import { resolveGenerationReferences } from './generationReferenceResolver'
 import { generateVideo } from './videoActions'
@@ -14,11 +15,12 @@ export type GenerationNodeExecutor = (
 ) => Promise<GenerationNodeResult>
 
 export const generationNodeExecutor: GenerationNodeExecutor = async (node, context) => {
-  if (node.kind === 'image') {
+  const executionKind = getGenerationNodeExecutionKind(node.kind)
+  if (executionKind === 'image') {
     const references = resolveGenerationReferences(node, context)
     return generateImage(node, { references })
   }
-  if (node.kind === 'video') {
+  if (executionKind === 'video') {
     const references = resolveGenerationReferences(node, context)
     return generateVideo(node, { references })
   }

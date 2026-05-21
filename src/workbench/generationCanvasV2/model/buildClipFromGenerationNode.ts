@@ -1,5 +1,6 @@
 import type { TimelineClip, TimelineTrackType } from '../../timeline/timelineTypes'
 import type { GenerationCanvasNode, GenerationNodeResult } from './generationCanvasTypes'
+import { getGenerationNodeExecutionKind } from './generationNodeKinds'
 
 const DEFAULT_IMAGE_SECONDS = 3
 const DEFAULT_VIDEO_SECONDS = 5
@@ -32,8 +33,9 @@ function resolveSelectedResult(node: GenerationCanvasNode, resultId?: string): G
 
 function resolveClipType(node: GenerationCanvasNode, result: GenerationNodeResult | null): TimelineTrackType {
   if (result?.type === 'image' || result?.type === 'video') return result.type
-  if (node.kind === 'image' || node.kind === 'keyframe' || node.kind === 'character' || node.kind === 'scene') return 'image'
-  if (node.kind === 'video') return 'video'
+  const executionKind = getGenerationNodeExecutionKind(node.kind)
+  if (executionKind === 'image') return 'image'
+  if (executionKind === 'video') return 'video'
   return 'image'
 }
 

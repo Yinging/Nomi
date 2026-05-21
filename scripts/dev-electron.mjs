@@ -1,18 +1,28 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import net from "node:net";
 
 const require = createRequire(import.meta.url);
-const isWindows = process.platform === "win32";
 const electron = require("electron");
 const vitePackagePath = require.resolve("vite/package.json");
 const viteBin = path.join(path.dirname(vitePackagePath), "bin", "vite.js");
+const tscPackagePath = require.resolve("typescript/package.json");
+const tscBin = path.join(path.dirname(tscPackagePath), "bin", "tsc");
 
 function electronEnv(extra = {}) {
   const env = { ...process.env, ...extra };
   delete env.ELECTRON_RUN_AS_NODE;
   return env;
+}
+
+function compileElectronMain() {
+  const result = spawnSync(process.execPath, [tscBin, "-p", "electron/tsconfig.json"], {
+    stdio: "inherit",
+    env: electronEnv(),
+  });
+  if (result.signal) process.kill(process.pid, result.signal);
+  if (typeof result.status === "number" && result.status !== 0) process.exit(result.status);
 }
 
 function start(command, args, options = {}) {
@@ -28,20 +38,7 @@ function start(command, args, options = {}) {
   return child;
 }
 
-function quotePowerShell(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
 function startElectron(options = {}) {
-  if (isWindows) {
-    return start("powershell.exe", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      `& ${quotePowerShell(electron)} .`,
-    ], options);
-  }
   return start(electron, ["."], options);
 }
 
@@ -83,7 +80,10 @@ async function findRendererPort(preferredPort) {
 
 const rendererPort = await findRendererPort(5173);
 const rendererUrl = `http://127.0.0.1:${rendererPort}`;
-const vite = start(process.execPath, [viteBin, "--host", "127.0.0.1", "--port", String(rendererPort), "--strictPort"]);
+compileElectronMain();
+const vite = start(process.execPath, [viteBin, "--host", "127.0.0.1", "--port", String(rendererPort), "--strictPort"], {
+  env: electronEnv(),
+});
 
 const shutdown = () => {
   vite.kill();

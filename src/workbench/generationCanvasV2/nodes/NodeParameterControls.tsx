@@ -1,6 +1,6 @@
 import React from 'react'
-import { cn } from '../../../../utils/cn'
-import { deriveGenerationModelCatalogStatus, findModelOptionByIdentifier, useGenerationModelOptionsState } from '../../adapters/modelOptionsAdapter'
+import { cn } from '../../../utils/cn'
+import { deriveGenerationModelCatalogStatus, findModelOptionByIdentifier, useGenerationModelOptionsState } from '../adapters/modelOptionsAdapter'
 import {
   formatVideoOptionLabel,
   parseModelParameterControls,
@@ -12,13 +12,14 @@ import {
   type ModelParameterControlOption,
   type VideoModelCatalogConfig,
   type VideoModelControlBinding,
-} from '../../../../config/modelCatalogMeta'
-import { normalizeOrientation, type Orientation } from '../../../../utils/orientation'
-import type { ModelOption } from '../../../../config/models'
-import { WorkbenchButton } from '../../../../design'
-import type { GenerationCanvasEdge, GenerationCanvasEdgeMode, GenerationCanvasNode } from '../../model/generationCanvasTypes'
-import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
-import { importWorkbenchLocalAssetFile, type WorkbenchAssetDto } from '../../../api/assetUploadApi'
+} from '../../../config/modelCatalogMeta'
+import { normalizeOrientation, type Orientation } from '../../../utils/orientation'
+import type { ModelOption } from '../../../config/models'
+import { WorkbenchButton } from '../../../design'
+import type { GenerationCanvasEdge, GenerationCanvasEdgeMode, GenerationCanvasNode } from '../model/generationCanvasTypes'
+import { isImageLikeGenerationNodeKind, isVideoLikeGenerationNodeKind } from '../model/generationNodeKinds'
+import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { importWorkbenchLocalAssetFile, type WorkbenchAssetDto } from '../../api/assetUploadApi'
 
 type SelectOption = string | {
   value: string | number
@@ -598,8 +599,8 @@ export default function NodeParameterControls({
   const [uploadingSlotKey, setUploadingSlotKey] = React.useState('')
   const [uploadError, setUploadError] = React.useState('')
   const [openSlotKey, setOpenSlotKey] = React.useState('')
-  const isImageLike = node.kind === 'image' || node.kind === 'keyframe' || node.kind === 'character' || node.kind === 'scene'
-  const isVideoLike = node.kind === 'video'
+  const isImageLike = isImageLikeGenerationNodeKind(node.kind)
+  const isVideoLike = isVideoLikeGenerationNodeKind(node.kind)
   const isGenerationNode = isImageLike || isVideoLike
   if (!isGenerationNode) return null
 
@@ -763,8 +764,7 @@ export default function NodeParameterControls({
       ]
     : modelImageUrlSlots
   const activeSlots = imageUrlSlots
-  const IMAGE_LIKE_KINDS = new Set(['image', 'keyframe', 'character', 'scene'])
-  const candidateImageNodes = nodes.filter((item) => item.id !== node.id && IMAGE_LIKE_KINDS.has(item.kind))
+  const candidateImageNodes = nodes.filter((item) => item.id !== node.id && isImageLikeGenerationNodeKind(item.kind))
   const showReferences = section === 'all' || section === 'references'
   const showModel = section === 'all' || section === 'parameters' || section === 'model'
   const showControls = section === 'all' || section === 'parameters' || section === 'controls'

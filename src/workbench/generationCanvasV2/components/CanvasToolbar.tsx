@@ -1,33 +1,21 @@
 import React from 'react'
 import {
-  IconBoxMultiple,
   IconCopy,
   IconCut,
-  IconFlag,
-  IconLayoutGrid,
-  IconPhoto,
   IconPlus,
-  IconUser,
-  IconVideo,
-  IconWriting,
-  Icon360,
 } from '@tabler/icons-react'
 import { WorkbenchButton } from '../../../design'
 import { cn } from '../../../utils/cn'
 import type { GenerationNodeKind } from '../model/generationCanvasTypes'
+import { getGenerationNodePlugin, getQuickAddGenerationNodePlugins } from '../nodes/renderRegistry'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 
-const QUICK_ADD_NODE_ITEMS: Array<{ kind: GenerationNodeKind; label: string; icon: React.ReactNode }> = [
-  { kind: 'text', label: '文本', icon: <IconWriting size={15} /> },
-  { kind: 'character', label: '角色', icon: <IconUser size={15} /> },
-  { kind: 'scene', label: '场景', icon: <IconLayoutGrid size={15} /> },
-  { kind: 'image', label: '图片', icon: <IconPhoto size={15} /> },
-  { kind: 'keyframe', label: '关键帧', icon: <IconFlag size={15} /> },
-  { kind: 'video', label: '视频', icon: <IconVideo size={15} /> },
-  { kind: 'shot', label: '镜头', icon: <IconBoxMultiple size={15} /> },
-  { kind: 'panorama', label: '全景图', icon: <Icon360 size={15} /> },
-  { kind: 'output', label: '输出', icon: <IconFlag size={15} /> },
-]
+const QUICK_ADD_NODE_ITEMS = getQuickAddGenerationNodePlugins()
+
+function NodePluginIcon({ kind, size }: { kind: GenerationNodeKind; size: number }): JSX.Element {
+  const Icon = getGenerationNodePlugin(kind).icon
+  return <Icon size={size} />
+}
 
 type CanvasToolbarProps = {
   getInsertionPosition: () => { x: number; y: number }
@@ -63,23 +51,26 @@ export function NodeAddMenu({
       onContextMenu={onContextMenu}
       onPointerDown={onPointerDown}
     >
-      {QUICK_ADD_NODE_ITEMS.map((item) => (
-        <WorkbenchButton
-          key={item.kind}
-          className={cn(
-            'inline-flex items-center justify-start gap-[6px]',
-            'w-full h-8 min-h-8 px-2 border-0 rounded-[8px]',
-            'bg-workbench-surface-solid text-workbench-ink font-[inherit] text-xs cursor-pointer',
-            'hover:bg-nomi-ink-05',
-          )}
-          role="menuitem"
-          aria-label={`添加${item.label}节点`}
-          onClick={() => onAddNode(item.kind)}
-        >
-          {item.icon}
-          <span>{item.label}</span>
-        </WorkbenchButton>
-      ))}
+      {QUICK_ADD_NODE_ITEMS.map((item) => {
+        const Icon = item.icon
+        return (
+          <WorkbenchButton
+            key={item.kind}
+            className={cn(
+              'inline-flex items-center justify-start gap-[6px]',
+              'w-full h-8 min-h-8 px-2 border-0 rounded-[8px]',
+              'bg-workbench-surface-solid text-workbench-ink font-[inherit] text-xs cursor-pointer',
+              'hover:bg-nomi-ink-05',
+            )}
+            role="menuitem"
+            aria-label={`添加${item.menuLabel}节点`}
+            onClick={() => onAddNode(item.kind)}
+          >
+            <Icon size={15} />
+            <span>{item.menuLabel}</span>
+          </WorkbenchButton>
+        )
+      })}
     </div>
   )
 }
@@ -128,7 +119,7 @@ export default function CanvasToolbar({ getInsertionPosition }: CanvasToolbarPro
         title="文本"
         onClick={() => handleAddNode('text')}
       >
-        <IconWriting size={15} />
+        <NodePluginIcon kind="text" size={15} />
         <span className="hidden">文本</span>
       </WorkbenchButton>
       <WorkbenchButton
@@ -137,7 +128,7 @@ export default function CanvasToolbar({ getInsertionPosition }: CanvasToolbarPro
         title="图像"
         onClick={() => handleAddNode('image')}
       >
-        <IconPhoto size={15} />
+        <NodePluginIcon kind="image" size={15} />
         <span className="hidden">图像</span>
       </WorkbenchButton>
       <WorkbenchButton
@@ -146,7 +137,7 @@ export default function CanvasToolbar({ getInsertionPosition }: CanvasToolbarPro
         title="视频"
         onClick={() => handleAddNode('video')}
       >
-        <IconVideo size={15} />
+        <NodePluginIcon kind="video" size={15} />
         <span className="hidden">视频</span>
       </WorkbenchButton>
       <span className={cn('w-5 h-px bg-workbench-border')} />
