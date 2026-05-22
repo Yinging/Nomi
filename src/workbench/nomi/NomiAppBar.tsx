@@ -8,19 +8,29 @@ import { cn } from '../../utils/cn'
 type NomiAppBarProps = {
   workspaceMode: WorkspaceMode
   onWorkspaceModeChange: (mode: WorkspaceMode) => void
+  projectName?: string
   onBackToLibrary?: () => void
   onOpenModelCatalog?: () => void
+  onRenameProject?: (name: string) => void
 }
 
-export default function NomiAppBar({ workspaceMode, onWorkspaceModeChange, onBackToLibrary, onOpenModelCatalog }: NomiAppBarProps): JSX.Element {
+export default function NomiAppBar({ workspaceMode, onWorkspaceModeChange, projectName, onBackToLibrary, onOpenModelCatalog, onRenameProject }: NomiAppBarProps): JSX.Element {
   const assetInputRef = React.useRef<HTMLInputElement>(null)
   const [editingProjectName, setEditingProjectName] = React.useState(false)
-  const [projectTitle, setProjectTitle] = React.useState('未命名 Nomi 项目')
+  const [projectTitle, setProjectTitle] = React.useState(projectName || '未命名 Nomi 项目')
+
+  React.useEffect(() => {
+    if (!editingProjectName && projectName) setProjectTitle(projectName)
+  }, [projectName, editingProjectName])
 
   const commitProjectTitle = React.useCallback(() => {
-    setProjectTitle((value) => value.trim() || '未命名 Nomi 项目')
+    setProjectTitle((value) => {
+      const trimmed = value.trim() || '未命名 Nomi 项目'
+      onRenameProject?.(trimmed)
+      return trimmed
+    })
     setEditingProjectName(false)
-  }, [])
+  }, [onRenameProject])
 
   const handleAssetFilesSelected = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files || []).filter((file) => file.type.startsWith('image/'))

@@ -614,6 +614,7 @@ export default function BaseGenerationNode({ node, selected, readOnly = false }:
         width: visualSize.width,
         height: visualSize.height,
         gridTemplateRows: `${previewHeight}px`,
+        willChange: 'transform',
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

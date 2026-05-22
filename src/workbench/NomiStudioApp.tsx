@@ -8,6 +8,8 @@ import StatsModelCatalogManagement from '../ui/stats/system/modelCatalog/StatsMo
 import {
   createLocalProject,
   deleteLocalProject,
+  readLocalProject,
+  saveLocalProject,
   useLocalProjects,
   type LocalProjectSummary,
 } from './library/localProjectStore'
@@ -176,6 +178,18 @@ export default function NomiStudioApp(): JSX.Element {
     navigate(buildStudioUrl(), { replace: false })
   }, [navigate])
 
+  const handleRenameProject = React.useCallback((newName: string) => {
+    if (!activeProject) return
+    const current = readLocalProject(activeProject.id)
+    if (!current) return
+    const record = saveLocalProject(activeProject.id, {
+      workbenchDocument: current.workbenchDocument ?? { version: 1, title: newName, contentJson: null, updatedAt: Date.now() },
+      timeline: current.timeline ?? { clips: [], totalDuration: 0 },
+      generationCanvas: current.generationCanvas ?? { nodes: [], edges: [] },
+    }, newName)
+    setActiveProject({ ...activeProject, name: record.name })
+  }, [activeProject])
+
   if (view === 'library') {
     return (
       <>
@@ -196,8 +210,10 @@ export default function NomiStudioApp(): JSX.Element {
         generation={<GenerationCanvas />}
         generationAiLayout={generationAiCollapsed ? 'overlay' : 'sidebar'}
         generationAi={<CanvasAssistantPanel defaultCollapsed onCollapsedChange={setGenerationAiCollapsed} />}
+        projectName={activeProject?.name}
         onBackToLibrary={backToLibrary}
         onOpenModelCatalog={() => setModelCatalogOpened(true)}
+        onRenameProject={handleRenameProject}
       />
       <DesignDrawer
         className={cn('nomi-model-catalog-drawer')}
