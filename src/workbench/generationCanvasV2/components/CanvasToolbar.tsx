@@ -2,7 +2,6 @@ import React from 'react'
 import {
   IconCopy,
   IconCut,
-  IconPlus,
 } from '@tabler/icons-react'
 import { WorkbenchButton } from '../../../design'
 import { cn } from '../../../utils/cn'
@@ -15,10 +14,6 @@ const QUICK_ADD_NODE_ITEMS = getQuickAddGenerationNodePlugins()
 function NodePluginIcon({ kind, size }: { kind: GenerationNodeKind; size: number }): JSX.Element {
   const Icon = getGenerationNodePlugin(kind).icon
   return <Icon size={size} />
-}
-
-type CanvasToolbarProps = {
-  getInsertionPosition: () => { x: number; y: number }
 }
 
 type NodeAddMenuProps = {
@@ -75,17 +70,18 @@ export function NodeAddMenu({
   )
 }
 
+type CanvasToolbarProps = {
+  getInsertionPosition: () => { x: number; y: number }
+}
+
 export default function CanvasToolbar({ getInsertionPosition }: CanvasToolbarProps): JSX.Element {
   const addNode = useGenerationCanvasStore((state) => state.addNode)
   const selectedNodeIds = useGenerationCanvasStore((state) => state.selectedNodeIds)
   const copySelectedNodes = useGenerationCanvasStore((state) => state.copySelectedNodes)
   const cutSelectedNodes = useGenerationCanvasStore((state) => state.cutSelectedNodes)
-  const pendingConnectionSourceId = useGenerationCanvasStore((state) => state.pendingConnectionSourceId)
-  const [nodeMenuOpen, setNodeMenuOpen] = React.useState(false)
 
   const handleAddNode = (kind: GenerationNodeKind) => {
     addNode({ kind, position: getInsertionPosition() })
-    setNodeMenuOpen(false)
   }
 
   return (
@@ -98,21 +94,6 @@ export default function CanvasToolbar({ getInsertionPosition }: CanvasToolbarPro
       )}
       aria-label="生成画布工具栏"
     >
-      <WorkbenchButton
-        className={cn(
-          'w-8 h-8 min-h-8 p-0 border-0 rounded-nomi-sm cursor-pointer',
-          'data-[primary=true]:bg-nomi-ink data-[primary=true]:text-nomi-paper',
-        )}
-        aria-label="添加节点"
-        title="添加节点"
-        data-primary="true"
-        onClick={() => setNodeMenuOpen((open) => !open)}
-      >
-        <IconPlus size={17} />
-        <span className="hidden">添加</span>
-      </WorkbenchButton>
-      {nodeMenuOpen ? <NodeAddMenu onAddNode={handleAddNode} /> : null}
-      <span className={cn('w-5 h-px bg-workbench-border')} />
       <WorkbenchButton
         className={cn('w-8 h-8 min-h-8 p-0 border-0 rounded-nomi-sm cursor-pointer')}
         aria-label="添加文本节点"
@@ -140,10 +121,16 @@ export default function CanvasToolbar({ getInsertionPosition }: CanvasToolbarPro
         <NodePluginIcon kind="video" size={15} />
         <span className="hidden">视频</span>
       </WorkbenchButton>
+      <WorkbenchButton
+        className={cn('w-8 h-8 min-h-8 p-0 border-0 rounded-nomi-sm cursor-pointer')}
+        aria-label="添加全景图节点"
+        title="全景图"
+        onClick={() => handleAddNode('panorama')}
+      >
+        <NodePluginIcon kind="panorama" size={15} />
+        <span className="hidden">全景图</span>
+      </WorkbenchButton>
       <span className={cn('w-5 h-px bg-workbench-border')} />
-      <span className={cn('hidden', pendingConnectionSourceId && 'text-workbench-accent')}>
-        {pendingConnectionSourceId ? '选择目标节点' : '拖拽空白区域平移'}
-      </span>
       <WorkbenchButton
         className={cn('w-8 h-8 min-h-8 p-0 border-0 rounded-nomi-sm cursor-pointer disabled:cursor-not-allowed disabled:opacity-[0.42]')}
         aria-label="复制选中节点"
