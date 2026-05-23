@@ -14,7 +14,7 @@ import {
 import { buildStoryDocument, type TryNowExample } from './library/tryNowExamples'
 import { useWorkbenchStore } from './workbenchStore'
 import { requestStoryboardPlanning } from './generationCanvasV2/agent/storyboardLauncher'
-import { createWorkbenchProjectPersistenceService } from './project/projectPersistenceService'
+import { consumeCategoryMigrationDiagnostic, createWorkbenchProjectPersistenceService } from './project/projectPersistenceService'
 import { readCurrentWorkbenchProjectPayload } from './project/workbenchProjectSession'
 import { useWorkspaceEvents } from './useWorkspaceEvents'
 import { DesignDrawer } from '../design'
@@ -85,6 +85,13 @@ export default function NomiStudioApp(): JSX.Element {
       activeProjectIdRef.current = hydrated.id
       setActiveProject(hydrated)
       setView('studio')
+      const migrationDiag = consumeCategoryMigrationDiagnostic()
+      if (migrationDiag && (migrationDiag.migratedNodes > 0 || migrationDiag.categoriesSeeded)) {
+        toast(
+          `项目已升级到目录树：${migrationDiag.migratedNodes} 个节点已归类`,
+          'success',
+        )
+      }
       navigate(buildStudioUrl(hydrated.id), { replace: options.replaceUrl ?? false })
     } finally {
       hydratingProjectRef.current = false
