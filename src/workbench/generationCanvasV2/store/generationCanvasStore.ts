@@ -100,6 +100,8 @@ type GenerationCanvasState = {
   trackNodeRun: (nodeId: string, runId: string, patch: NodeRunRecordPatch) => void
   addNodeResult: (nodeId: string, result: GenerationNodeResult) => void
   duplicateNodeForRegeneration: (nodeId: string) => GenerationCanvasNode | null
+  /** Phase E: move a node into a different category (sidebar drop / right-click). */
+  reassignNodeCategory: (nodeId: string, categoryId: string) => void
   rollbackHistory: (nodeId: string, resultId: string) => void
   readSnapshot: () => GenerationCanvasSnapshot
   restoreSnapshot: (snapshot: unknown) => void
@@ -763,6 +765,17 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
       bumpPersistRevision(current)
     })
     return copiedNode
+  },
+  reassignNodeCategory: (nodeId, categoryId) => {
+    const id = String(categoryId || '').trim()
+    if (!id) return
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node) return
+      if (node.categoryId === id) return
+      node.categoryId = id
+      bumpPersistRevision(state)
+    })
   },
   rollbackHistory: (nodeId, resultId) => {
     set((state) => {
