@@ -1965,12 +1965,24 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   }
 
   if (wantedKind === "text") {
-    const response = await postJson(endpoint(vendor, "/v1/chat/completions"), apiKey, vendor, {
-      model: model.modelAlias || model.modelKey,
+    const aiSdkModel = buildAiSdkModel({
+      kind: vendor.providerKind || "openai-compatible",
+      baseURL: endpoint(vendor, "/v1"),
+      apiKey,
+      modelId: model.modelAlias || model.modelKey,
+    });
+    const result = await generateText({
+      model: aiSdkModel,
       messages: [{ role: "user", content: request.prompt }],
       temperature: 0.7,
     });
-    return { id: taskId, kind, status: "succeeded", assets: [], raw: response };
+    return {
+      id: taskId,
+      kind,
+      status: "succeeded",
+      assets: [],
+      raw: { text: result.text, response: result.response, finishReason: result.finishReason },
+    };
   }
 
   const suffix = wantedKind === "video" ? "/v1/videos/generations" : "/v1/images/generations";

@@ -564,9 +564,10 @@ Spawn final audit agent，全面 review。
 |---|---|---|---|---|
 | `<generation_canvas_plan>` XML parser 整文件 | B7 | `src/workbench/generationCanvasV2/agent/generationCanvasAgentPlan.ts` (PLAN_BLOCK_RE / parseGenerationCanvasAgentPlan / 相关 schema 与类型；B6 后无外部引用) | (本 commit) | ✅ |
 | 假流式逻辑 | B4 | `src/api/server.ts:openDesktopAgentsChatStream` 旧实现 | rebased SHA in branch | ✅ |
-| 22 个 legacy skill | D4 | `skills/tapcanvas-*` 等 | TBD | ⏸ |
+| 23 个 legacy skill | D4 | `skills/tapcanvas-*` 等 → `skills/legacy/` | `f690259` | ✅ |
 | `apps/` 目录 | (已删) | / | `--` (untracked clean) | ✅ |
-| `apps/agents` 在 docs 中的引用 | D5 | `docs/user-guide.md`, `docs/provider-integration.md`, `README.md` | TBD | ⏸ |
+| `apps/agents` 在 user-facing docs 中的引用 | D5 | `docs/user-guide.md`, `docs/provider-integration.md`, `README.md` | `a07cbfa` | ✅ |
+| 文本资产生成路径的 postJson chat completions | D6 | `electron/runtime.ts:runGenerationTask` 文本路径 → AI SDK `generateText` | (D6 commit) | ✅ |
 
 ---
 
