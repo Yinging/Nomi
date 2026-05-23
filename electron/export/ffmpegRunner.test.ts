@@ -78,10 +78,15 @@ describe("transcodeWebmToMp4", () => {
     });
 
     expect(result.relativePath).toMatch(/^exports\/My-Export-\d+\.mp4$/);
+    expect(result.relativePath).not.toContain(".partial");
     expect(result.absolutePath).toBe(path.join(projectDir, result.relativePath));
     expect(fs.readFileSync(result.absolutePath, "utf8")).toBe("mp4-bytes");
     expect(calls).toHaveLength(1);
     expect(calls[0].command).toBe("/usr/local/bin/ffmpeg");
+    const ffmpegOutputPath = calls[0].args[calls[0].args.length - 1];
+    expect(ffmpegOutputPath).toMatch(/\.partial\.mp4$/);
+    expect(ffmpegOutputPath).not.toBe(result.absolutePath);
+    expect(fs.existsSync(ffmpegOutputPath)).toBe(false);
     expect(calls[0].args).toContain("-c:v");
     expect(calls[0].args).toContain("libx264");
     expect(calls[0].args).toContain("-r");
@@ -99,6 +104,25 @@ describe("transcodeWebmToMp4", () => {
       ffmpegPath: "/usr/local/bin/ffmpeg",
       runProcess: async () => ({ code: 1, stderr: "Unknown encoder libx264" }),
     })).rejects.toThrow("Unknown encoder libx264");
+  });
+
+  it("removes the partial mp4 when conversion fails", async () => {
+    const projectDir = makeTempDir();
+    let attemptedOutputPath = "";
+    await expect(transcodeWebmToMp4({
+      projectDir,
+      inputBytes: Buffer.from("webm-bytes"),
+      outputName: "Broken Export",
+      ffmpegPath: "/usr/local/bin/ffmpeg",
+      runProcess: async (_command, args) => {
+        attemptedOutputPath = args[args.length - 1];
+        fs.writeFileSync(attemptedOutputPath, "partial-mp4-bytes");
+        return { code: 1, stderr: "encoder failed" };
+      },
+    })).rejects.toThrow("encoder failed");
+
+    expect(attemptedOutputPath).toMatch(/\.partial\.mp4$/);
+    expect(fs.existsSync(attemptedOutputPath)).toBe(false);
   });
 
   it("reports a reinstallable encoder component instead of asking users to install ffmpeg", async () => {

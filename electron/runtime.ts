@@ -5,6 +5,7 @@ import path from "node:path";
 import { generateText, streamText, tool } from "ai";
 import { z } from "zod";
 import { buildAiSdkModel } from "./ai/buildAiSdkModel";
+import { assertProjectExportRelativePath, ensureExportDirs } from "./export/exportPaths";
 import { transcodeWebmToMp4 } from "./export/ffmpegRunner";
 import {
   canvasNodeKindSchema,
@@ -398,8 +399,7 @@ function projectDirById(projectId: string): string | null {
 function ensureProjectFolders(projectDir: string): void {
   ensureDir(projectDir);
   ensureDir(path.join(projectDir, "assets"));
-  ensureDir(path.join(projectDir, "exports"));
-  ensureDir(path.join(projectDir, "cache"));
+  ensureExportDirs(projectDir);
 }
 
 function toSummary(record: ProjectRecord): Omit<ProjectRecord, "payload"> {
@@ -501,8 +501,10 @@ export function showExportInFolder(payload: unknown): { ok: true } {
   const relativePath = String(raw.relativePath || "").trim();
   if (!projectId) throw new Error("打开导出位置失败：缺少项目 ID");
   if (!relativePath) throw new Error("打开导出位置失败：缺少导出文件路径");
-  const normalized = relativePath.replace(/\\/g, "/");
-  if (!normalized.startsWith("exports/") || normalized.includes("..")) {
+  let normalized: string;
+  try {
+    normalized = assertProjectExportRelativePath(relativePath);
+  } catch {
     throw new Error("打开导出位置失败：只能打开当前项目 exports 文件夹内的文件");
   }
   const resolved = resolveProjectRelativePath(projectId, normalized);
