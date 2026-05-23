@@ -7,6 +7,12 @@ import {
   type ToolCallEvent,
 } from '../agent/generationCanvasAgentClient'
 import { generationCanvasTools } from '../agent/generationCanvasTools'
+import {
+  buildStoryboardPlanningMessage,
+  STORYBOARD_PLANNER_SKILL,
+  STORYBOARD_PLANNING_EVENT,
+  type StoryboardPlanningRequest,
+} from '../agent/storyboardLauncher'
 import { getGenerationNodeDefaultTitle } from '../model/generationNodeKinds'
 import type { GenerationNodeKind } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
@@ -109,12 +115,78 @@ export default function CanvasAssistantPanel({
     )))
   }, [setMessages])
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const text = draft.trim()
+  /**
+   * Apply a confirmed tool call by routing through the renderer-side
+   * generationCanvasTools store. Returns a structured result that we feed
+   * back to the LLM. Phase B left this referenced but undefined; C2/C3
+   * fills the gap so the confirmation card can actually mutate the canvas.
+   */
+  const applyConfirmedToolCall = React.useCallback(async (toolName: string, args: unknown): Promise<unknown> => {
+    const record = (args && typeof args === 'object') ? args as Record<string, unknown> : {}
+    if (toolName === 'create_canvas_nodes') {
+      const incoming = Array.isArray(record.nodes) ? record.nodes : []
+      const inputs = incoming.map((raw, index) => {
+        const node = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
+        const kind = (typeof node.kind === 'string' ? node.kind : 'image') as GenerationNodeKind
+        const positionRecord = (node.position && typeof node.position === 'object') ? node.position as Record<string, unknown> : null
+        return {
+          kind,
+          title: typeof node.title === 'string' && node.title.trim()
+            ? node.title.trim()
+            : `${getGenerationNodeDefaultTitle(kind)} ${index + 1}`,
+          prompt: typeof node.prompt === 'string' ? node.prompt : '',
+          position: {
+            x: typeof positionRecord?.x === 'number' ? positionRecord.x : 160 + index * 340,
+            y: typeof positionRecord?.y === 'number' ? positionRecord.y : 260 + (index % 2) * 220,
+          },
+        }
+      })
+      const created = generationCanvasTools.create_nodes(inputs)
+      const clientIdToNodeId: Record<string, string> = {}
+      incoming.forEach((raw, index) => {
+        const node = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
+        const clientId = typeof node.clientId === 'string' ? node.clientId : ''
+        if (clientId && created[index]) clientIdToNodeId[clientId] = created[index].id
+      })
+      return {
+        createdNodeIds: created.map((node) => node.id),
+        clientIdToNodeId,
+      }
+    }
+    if (toolName === 'connect_canvas_edges') {
+      const rawEdges = Array.isArray(record.edges) ? record.edges : []
+      const edges = rawEdges
+        .map((raw) => (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {})
+        .map((edge) => ({
+          source: String(edge.sourceClientId || edge.source || '').trim(),
+          target: String(edge.targetClientId || edge.target || '').trim(),
+        }))
+        .filter((edge) => edge.source && edge.target)
+      if (edges.length > 0) generationCanvasTools.connect_nodes(edges)
+      return { connectedCount: edges.length }
+    }
+    if (toolName === 'set_node_prompt') {
+      const nodeId = String(record.nodeId || '').trim()
+      const prompt = typeof record.prompt === 'string' ? record.prompt : ''
+      const node = generationCanvasTools.update_node_prompt(nodeId, prompt)
+      if (!node) throw new Error('node_not_found')
+      return { nodeId: node.id }
+    }
+    if (toolName === 'delete_canvas_nodes') {
+      throw new Error('delete_canvas_nodes is not yet implemented')
+    }
+    throw new Error(`unknown tool ${toolName}`)
+  }, [])
+
+  type SubmitMessageOptions = {
+    skill?: { key: string; name: string }
+    displayMessage?: string
+  }
+
+  const submitAgentMessage = React.useCallback((text: string, options: SubmitMessageOptions = {}) => {
     if (!text || busy) return
     setDraft('')
-    appendMessage({ role: 'user', content: text })
+    appendMessage({ role: 'user', content: options.displayMessage || text })
     const assistantMessageId = createMessageId()
     setMessages((current) => [
       ...current,
@@ -129,6 +201,7 @@ export default function CanvasAssistantPanel({
           snapshot,
           selectedNodes,
           mode,
+          skill: options.skill,
           onContent: (_delta, streamedText) => {
             updateMessage(assistantMessageId, streamedText || '处理中...')
           },
@@ -181,7 +254,33 @@ export default function CanvasAssistantPanel({
         setBusy(false)
       }
     })()
+  }, [appendMessage, applyConfirmedToolCall, busy, mode, selectedNodes, setDraft, setMessages, snapshot, updateMessage])
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    submitAgentMessage(draft.trim())
   }
+
+  // Listen for "Story → Storyboard" requests dispatched from the creation
+  // editor (C2) or the project library "Try Now" hero (C6). The panel
+  // expands, drops the user's story into the chat thread, and runs the
+  // storyboard-planner skill which will trigger create_canvas_nodes +
+  // connect_canvas_edges tool calls.
+  React.useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<StoryboardPlanningRequest>).detail
+      const storyText = detail?.storyText?.trim() || ''
+      if (!storyText) return
+      setCollapsed(false)
+      const message = buildStoryboardPlanningMessage(storyText)
+      submitAgentMessage(message, {
+        skill: STORYBOARD_PLANNER_SKILL,
+        displayMessage: `🎬 拆镜头\n\n${storyText}`,
+      })
+    }
+    window.addEventListener(STORYBOARD_PLANNING_EVENT, handler as EventListener)
+    return () => window.removeEventListener(STORYBOARD_PLANNING_EVENT, handler as EventListener)
+  }, [setCollapsed, submitAgentMessage])
 
   const handleNewConversation = React.useCallback(() => {
     resetConversation()
