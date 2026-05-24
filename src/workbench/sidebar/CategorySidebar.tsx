@@ -28,7 +28,7 @@ export default function CategorySidebar({ categories }: Props): JSX.Element {
   const counts = React.useMemo(() => {
     const map = new Map<string, number>()
     for (const node of nodes) {
-      const id = node.categoryId || 'inbox'
+      const id = node.categoryId || 'shots'
       map.set(id, (map.get(id) || 0) + 1)
     }
     return map

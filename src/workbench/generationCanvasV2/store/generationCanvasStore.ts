@@ -10,6 +10,8 @@ import {
   upsertNode,
 } from '../model/graphOps'
 import { isGenerationNodeKind, isImageLikeGenerationNodeKind } from '../model/generationNodeKinds'
+import { nodeGroupSchema } from '../model/generationCanvasSchema'
+import { CATEGORY_IDS, type CategoryId } from '../model/generationCanvasTypes'
 import type {
   GenerationCanvasEdge,
   GenerationCanvasNode,
@@ -21,6 +23,7 @@ import type {
   GenerationNodeRunRecord,
   GenerationNodeStatus,
   GenerationNodeTaskKind,
+  NodeGroup,
 } from '../model/generationCanvasTypes'
 import type { WorkbenchAiMessage } from '../../ai/workbenchAiTypes'
 
@@ -55,6 +58,7 @@ type GenerationCanvasState = {
   persistRevision: number
   nodes: GenerationCanvasNode[]
   edges: GenerationCanvasEdge[]
+  groups: NodeGroup[]
   selectedNodeIds: string[]
   pendingConnectionSourceId: string
   canvasZoom: number
@@ -109,7 +113,7 @@ type GenerationCanvasState = {
 
 type GenerationCanvasHistoryState = Pick<
   GenerationCanvasState,
-  'nodes' | 'edges' | 'selectedNodeIds' | 'pendingConnectionSourceId'
+  'nodes' | 'edges' | 'groups' | 'selectedNodeIds' | 'pendingConnectionSourceId'
 >
 
 type GenerationCanvasClipboard = {
@@ -134,6 +138,10 @@ function getHistoryFlags(): Pick<GenerationCanvasState, 'canUndo' | 'canRedo' | 
 
 function shouldPersistCanvasMutation(options?: CanvasMutationOptions): boolean {
   return options?.persist !== false
+}
+
+function isCategoryId(value: unknown): value is CategoryId {
+  return typeof value === 'string' && (CATEGORY_IDS as readonly string[]).includes(value)
 }
 
 function bumpPersistRevision(state: Pick<GenerationCanvasState, 'persistRevision'>): void {
@@ -175,6 +183,7 @@ function snapshotHistoryState(state: GenerationCanvasState): GenerationCanvasHis
   return {
     nodes: state.nodes,
     edges: state.edges,
+    groups: state.groups,
     selectedNodeIds: state.selectedNodeIds,
     pendingConnectionSourceId: state.pendingConnectionSourceId,
   }
@@ -225,6 +234,7 @@ function cloneClipboardPayload(payload: GenerationCanvasClipboard): GenerationCa
   return {
     nodes,
     edges,
+    groups: [],
     selectedNodeIds: nodes.map((node) => node.id),
     pendingConnectionSourceId: '',
   }
@@ -274,6 +284,7 @@ function normalizeGenerationCanvasSnapshot(input: unknown): GenerationCanvasSnap
     return {
       nodes: seedNodes,
       edges: [{ id: 'edge-gen-v2-text-1-gen-v2-image-1', source: 'gen-v2-text-1', target: 'gen-v2-image-1' }],
+      groups: [],
       selectedNodeIds: [],
     }
   }
@@ -288,15 +299,17 @@ function normalizeGenerationCanvasSnapshot(input: unknown): GenerationCanvasSnap
         const x = typeof positionRaw.x === 'number' && Number.isFinite(positionRaw.x) ? positionRaw.x : 0
         const y = typeof positionRaw.y === 'number' && Number.isFinite(positionRaw.y) ? positionRaw.y : 0
         if (!id || !kind) return []
-        const categoryId = typeof node.categoryId === 'string' && node.categoryId.trim() ? node.categoryId.trim() : undefined
-        return [{
-          ...(node as GenerationCanvasNode),
+        const rawCategoryId = typeof node.categoryId === 'string' ? node.categoryId.trim() : undefined
+        const categoryId = isCategoryId(rawCategoryId) ? rawCategoryId : undefined
+        const { categoryId: _discardedCategoryId, ...nodeWithoutCategoryId } = node
+        const normalizedNode: Omit<GenerationCanvasNode, 'categoryId'> = {
+          ...(nodeWithoutCategoryId as Omit<GenerationCanvasNode, 'categoryId'>),
           id,
           kind,
           title: typeof node.title === 'string' ? node.title : id,
           position: { x, y },
-          ...(categoryId ? { categoryId } : {}),
-        }]
+        }
+        return [categoryId ? { ...normalizedNode, categoryId } : normalizedNode]
       })
     : []
   const nodeIds = new Set(nodes.map((node) => node.id))
@@ -317,6 +330,12 @@ function normalizeGenerationCanvasSnapshot(input: unknown): GenerationCanvasSnap
   return {
     nodes,
     edges,
+    groups: Array.isArray(raw.groups)
+      ? raw.groups.flatMap((group): NodeGroup[] => {
+          const parsed = nodeGroupSchema.safeParse(group)
+          return parsed.success ? [parsed.data] : []
+        })
+      : [],
     selectedNodeIds,
   }
 }
@@ -352,6 +371,7 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
   persistRevision: 0,
   nodes: seedNodes,
   edges: [{ id: 'edge-gen-v2-text-1-gen-v2-image-1', source: 'gen-v2-text-1', target: 'gen-v2-image-1' }],
+  groups: [],
   selectedNodeIds: [],
   pendingConnectionSourceId: '',
   canvasZoom: 1,
@@ -528,6 +548,7 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
     set((state) => {
       state.nodes = previous.nodes
       state.edges = previous.edges
+      state.groups = previous.groups
       state.selectedNodeIds = previous.selectedNodeIds
       state.pendingConnectionSourceId = previous.pendingConnectionSourceId
       bumpPersistRevision(state)
@@ -543,6 +564,7 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
     set((state) => {
       state.nodes = next.nodes
       state.edges = next.edges
+      state.groups = next.groups
       state.selectedNodeIds = next.selectedNodeIds
       state.pendingConnectionSourceId = next.pendingConnectionSourceId
       bumpPersistRevision(state)
@@ -768,7 +790,7 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
   },
   reassignNodeCategory: (nodeId, categoryId) => {
     const id = String(categoryId || '').trim()
-    if (!id) return
+    if (!isCategoryId(id)) return
     set((state) => {
       const node = state.nodes.find((candidate) => candidate.id === nodeId)
       if (!node) return
@@ -790,6 +812,7 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
     return {
       nodes: state.nodes,
       edges: state.edges,
+      groups: state.groups,
       selectedNodeIds: state.selectedNodeIds,
     }
   },
@@ -803,6 +826,7 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
       persistRevision: get().persistRevision,
 	      nodes: normalized.nodes,
       edges: normalized.edges,
+      groups: normalized.groups,
       selectedNodeIds: normalized.selectedNodeIds,
       pendingConnectionSourceId: '',
       canvasZoom: 1,
