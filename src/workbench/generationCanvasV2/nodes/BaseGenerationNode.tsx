@@ -1,5 +1,6 @@
 import React from 'react'
-import { IconGripVertical, IconGrid3x3, IconLayoutGrid, IconMaximize, IconUpload } from '@tabler/icons-react'
+import { IconGripVertical, IconGrid3x3, IconInfoCircle, IconLayoutGrid, IconMaximize, IconUpload } from '@tabler/icons-react'
+import ProvenancePanel from './ProvenancePanel'
 import { cn } from '../../../utils/cn'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useWorkbenchStore } from '../../workbenchStore'
@@ -191,6 +192,8 @@ export default function BaseGenerationNode({ node, selected, readOnly = false }:
   const panoramaFullscreenRef = React.useRef<(() => void) | null>(null)
   const panoramaFourViewRef = React.useRef<(() => void) | null>(null)
   const [splittingGridSize, setSplittingGridSize] = React.useState<ImageGridSize | null>(null)
+  // E11: provenance viewer open state (mounted into node header for AI-generated assets)
+  const [provenanceOpen, setProvenanceOpen] = React.useState(false)
   const dragStartRef = React.useRef<{
     pointerX: number
     pointerY: number
@@ -823,7 +826,33 @@ export default function BaseGenerationNode({ node, selected, readOnly = false }:
             {STATUS_LABEL[status] ?? status}
           </span>
         ) : null}
+        {hasResult ? (
+          <button
+            type="button"
+            className={cn(
+              'ml-auto inline-grid place-items-center w-6 h-6 rounded-full',
+              'bg-nomi-paper/[0.82] text-nomi-ink-60 hover:text-nomi-ink',
+              'backdrop-blur-[8px] cursor-pointer pointer-events-auto',
+              'transition-colors duration-150',
+            )}
+            aria-label="查看生成记录"
+            title="生成记录 / Provenance"
+            onClick={(event) => {
+              event.stopPropagation()
+              setProvenanceOpen(true)
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <IconInfoCircle size={14} stroke={1.6} />
+          </button>
+        ) : null}
       </header>
+
+      <ProvenancePanel
+        node={node}
+        open={provenanceOpen}
+        onClose={() => setProvenanceOpen(false)}
+      />
 
       {status === 'error' && node.error && !selected ? (
         <div className="generation-canvas-v2-node__error-peek" title={node.error}>
