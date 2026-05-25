@@ -3,6 +3,10 @@ import { IconCopy, IconGripVertical, IconGrid3x3, IconInfoCircle, IconLayoutGrid
 import ProvenancePanel from './ProvenancePanel'
 import TitlePill from './TitlePill'
 import { getBuiltinCategoryById } from '../../project/projectCategories'
+import CharacterCardNode from './render/CharacterCardNode'
+import SceneCardNode from './render/SceneCardNode'
+import PropCardNode from './render/PropCardNode'
+import AudioStripNode from './render/AudioStripNode'
 import { cn } from '../../../utils/cn'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useWorkbenchStore } from '../../workbenchStore'
@@ -517,6 +521,17 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
   // E.2.1: shots 分类的 composer 真正 flex-inlined（不再 absolute 浮在节点下方）
   // 配合 spec §6.1 修正 3：composer 内嵌到 card flex 流，与图像区共占节点视觉空间
   const isInlineComposer = node.categoryId === 'shots' && !readOnly && node.kind !== 'panorama'
+
+  // [DESIGN-CARDS-07] renderKind 分发：非 shots 分类用专属 card 组件
+  // renderKind 优先级：node.renderKind > 按 categoryId 推断
+  const renderKind = (node.renderKind as string | undefined) ?? (
+    node.categoryId === 'cast' ? 'character-card' :
+    node.categoryId === 'scene' ? 'scene-card' :
+    node.categoryId === 'prop' ? 'prop-card' :
+    node.categoryId === 'audio' ? 'audio-strip' :
+    undefined
+  )
+  const isCardKind = renderKind === 'character-card' || renderKind === 'scene-card' || renderKind === 'prop-card' || renderKind === 'audio-strip'
   const isImageGridSplitNode = node.kind === 'image' && typeof node.meta?.source === 'string' && node.meta.source.startsWith('image-grid-split-')
   const storedPreviewHeight = typeof node.meta?.previewHeight === 'number' && Number.isFinite(node.meta.previewHeight)
     ? isImageGridSplitNode
@@ -933,6 +948,17 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
         </div>
       ) : null}
 
+      {/* [DESIGN-CARDS-07] 卡片分发：非 shots 分类直接渲染对应 card 组件
+          preview div + composer 在卡片模式下隐藏 */}
+      {isCardKind ? (
+        <div className="w-full h-full rounded-nomi shadow-nomi-md overflow-hidden">
+          {renderKind === 'character-card' && <CharacterCardNode node={node} />}
+          {renderKind === 'scene-card' && <SceneCardNode node={node} />}
+          {renderKind === 'prop-card' && <PropCardNode node={node} />}
+          {renderKind === 'audio-strip' && <AudioStripNode node={node} />}
+        </div>
+      ) : null}
+
       <div
         className={cn(
           'generation-canvas-v2-node__preview',
@@ -941,6 +967,8 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
           isInlineComposer ? 'flex-1' : 'h-full',
           'rounded-nomi shadow-nomi-md cursor-grab touch-none',
           'bg-[repeating-linear-gradient(45deg,var(--nomi-ink-05)_0_10px,var(--nomi-ink-10)_10px_20px)]',
+          // [DESIGN-CARDS-07] 卡片模式隐藏 preview div
+          isCardKind && 'hidden',
         )}
         data-timeline-draggable={canSendToTimeline ? 'true' : 'false'}
         draggable={false}
@@ -1072,7 +1100,7 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
           - inline (shots 分类): 作为 flex child 嵌入 card 下半部分 (Mura 设计)
           - floating (其它分类 + selected): 仍 absolute 浮在节点下方（保持现有行为）
           one JSX, conditional positioning via className/style. */}
-      {(isInlineComposer || (selected && !readOnly && node.kind !== 'panorama')) ? (
+      {!isCardKind && (isInlineComposer || (selected && !readOnly && node.kind !== 'panorama')) ? (
         <div
           className={cn(
             'generation-canvas-v2-node__composer',
