@@ -9,7 +9,8 @@ import { cn } from '../../../../utils/cn'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { readPropMeta } from '../../model/nodeMetaFields'
 import { useNodeUsageCount } from '../../hooks/useNodeRelationships'
-import { STRIPED_BG_CLASS, UsageDot, PlaceholderCenter } from './CardCommon'
+import { STRIPED_BG_CLASS, UsageDot, UploadFallback } from './CardCommon'
+import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 
 type Props = {
   node: GenerationCanvasNode
@@ -18,7 +19,14 @@ type Props = {
 export default function PropCardNode({ node }: Props): JSX.Element {
   const meta = readPropMeta(node)
   const usageCount = useNodeUsageCount(node.id, node.title)
+  const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const hasImage = Boolean(node.result?.url)
+
+  const handleUpload = React.useCallback((dataUrl: string) => {
+    updateNode(node.id, {
+      result: { id: `upload-${Date.now()}`, type: 'image', url: dataUrl, createdAt: Date.now() },
+    })
+  }, [node.id, updateNode])
 
   return (
     <div className={cn('w-full h-full flex flex-col rounded-nomi-sm overflow-hidden bg-nomi-paper')}>
@@ -31,7 +39,7 @@ export default function PropCardNode({ node }: Props): JSX.Element {
             draggable={false}
           />
         ) : (
-          <PlaceholderCenter label={node.title || '道具'} />
+          <UploadFallback accept="image/*" label="道具图" onUpload={handleUpload} />
         )}
       </div>
 

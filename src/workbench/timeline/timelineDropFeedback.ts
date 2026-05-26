@@ -1,5 +1,6 @@
 import { canPlaceClip, frameToPixel, withClipStartFrame } from './timelineEdit'
 import type { TimelineClip, TimelineTrack } from './timelineTypes'
+import { getTrackTypeForClipType } from './timelineTypes'
 
 export type TimelineDropPreview = {
   clip: TimelineClip
@@ -14,7 +15,7 @@ export type TimelineDropPreview = {
 
 function trackTypeLabel(type: TimelineClip['type']): string {
   if (type === 'image') return '图片轨'
-  if (type === 'video') return '视频轨'
+  if (type === 'video' || type === 'audio') return '媒体轨'
   return '对应轨道'
 }
 
@@ -35,7 +36,8 @@ export function buildTimelineDropPreview(params: {
 }): TimelineDropPreview {
   const startFrame = Math.max(0, Math.floor(Number(params.startFrame) || 0))
   const placed = withClipStartFrame(params.clip, startFrame)
-  const typeMatches = params.track.type === placed.type
+  // v0.7.1: audio clip 落到 video 轨；getTrackTypeForClipType 做映射
+  const typeMatches = params.track.type === getTrackTypeForClipType(placed.type)
   const canPlace = typeMatches && canPlaceClip(params.track, placed)
   const reason = canPlace
     ? undefined

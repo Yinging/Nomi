@@ -8,11 +8,12 @@
  * 当前显示骨架 + meta 里的 audioKind / durationSec 优雅渲染。
  */
 import React from 'react'
-import { IconPlayerPlay } from '@tabler/icons-react'
+import { IconPlayerPlay, IconUpload } from '@tabler/icons-react'
 import { cn } from '../../../../utils/cn'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { readAudioMeta, AUDIO_KIND_LABELS } from '../../model/nodeMetaFields'
 import { useNodeUsageCount } from '../../hooks/useNodeRelationships'
+import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import { UsageDot } from './CardCommon'
 
 type Props = {
@@ -53,7 +54,42 @@ function WaveformPlaceholder(): JSX.Element {
 export default function AudioStripNode({ node }: Props): JSX.Element {
   const meta = readAudioMeta(node)
   const usageCount = useNodeUsageCount(node.id, node.title)
+  const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const audioKindLabel = meta.audioKind ? AUDIO_KIND_LABELS[meta.audioKind] : null
+  const hasAudio = Boolean(node.result?.url)
+  const audioRef = React.useRef<HTMLAudioElement | null>(null)
+  const [isPlaying, setPlaying] = React.useState(false)
+
+  // v0.7.1: 上传音频 — 用 dataURL 存进 result.url，type 暂用 'image' 占位（schema 未扩 'audio'）
+  // categoryId='audio' 是真正的派发依据，buildClipFromGenerationNode 看 categoryId 决定 clip.type='audio'
+  const handleUpload = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (loadEvent) => {
+      const dataUrl = loadEvent.target?.result
+      if (typeof dataUrl !== 'string') return
+      updateNode(node.id, {
+        result: { id: `upload-audio-${Date.now()}`, type: 'image', url: dataUrl, createdAt: Date.now() },
+        meta: { ...(node.meta || {}), audioFilename: file.name, audioMime: file.type },
+      })
+    }
+    reader.readAsDataURL(file)
+  }, [node.id, node.meta, updateNode])
+
+  const handleTogglePlay = React.useCallback((event: React.MouseEvent) => {
+    event.stopPropagation()
+    const audio = audioRef.current
+    if (!audio) return
+    if (audio.paused) {
+      void audio.play().catch(() => {})
+      setPlaying(true)
+    } else {
+      audio.pause()
+      setPlaying(false)
+    }
+  }, [])
 
   return (
     <div
@@ -62,21 +98,53 @@ export default function AudioStripNode({ node }: Props): JSX.Element {
         'flex items-center gap-3 px-3',
       )}
     >
-      {/* 播放按钮 — disabled in v0.7 (no real audio) */}
-      <button
-        type="button"
-        className={cn(
-          'inline-flex shrink-0 items-center justify-center w-8 h-8 rounded-full',
-          'bg-nomi-ink text-nomi-paper',
-          'opacity-50 cursor-not-allowed',
-        )}
-        aria-label="播放（暂不可用）"
-        title="播放（待 audio kind 上线）"
-        disabled
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <IconPlayerPlay size={14} stroke={1.8} aria-hidden />
-      </button>
+      {/* 隐藏 audio 元素 — v0.7.1 真实播放上传的音频 */}
+      {hasAudio ? (
+        <audio
+          ref={audioRef}
+          src={node.result!.url!}
+          preload="metadata"
+          onEnded={() => setPlaying(false)}
+          onLoadedMetadata={(event) => {
+            const durationSec = event.currentTarget.duration
+            if (Number.isFinite(durationSec) && durationSec > 0 && meta.durationSec !== durationSec) {
+              updateNode(node.id, {
+                meta: { ...(node.meta || {}), durationSec },
+              })
+            }
+          }}
+        />
+      ) : null}
+
+      {/* 播放按钮 / 上传按钮（无音频时） */}
+      {hasAudio ? (
+        <button
+          type="button"
+          className={cn(
+            'inline-flex shrink-0 items-center justify-center w-8 h-8 rounded-full',
+            'bg-nomi-ink text-nomi-paper hover:bg-nomi-accent transition-colors',
+          )}
+          aria-label={isPlaying ? '暂停' : '播放'}
+          title={isPlaying ? '暂停' : '播放'}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={handleTogglePlay}
+        >
+          <IconPlayerPlay size={14} stroke={1.8} aria-hidden />
+        </button>
+      ) : (
+        <label
+          className={cn(
+            'inline-flex shrink-0 items-center justify-center w-8 h-8 rounded-full cursor-pointer',
+            'bg-nomi-accent-soft text-nomi-accent hover:bg-nomi-accent hover:text-nomi-paper transition-colors',
+          )}
+          aria-label="上传音频"
+          title="上传音频"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <IconUpload size={14} stroke={1.8} aria-hidden />
+          <input className="hidden" type="file" accept="audio/*" onChange={handleUpload} />
+        </label>
+      )}
 
       {/* 类型徽标 + 名字 */}
       <div className="flex flex-col gap-1 min-w-0 shrink-0 max-w-[140px]">

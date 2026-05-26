@@ -48,6 +48,50 @@ export function PlaceholderCenter({ label }: { label: string }): JSX.Element {
 }
 
 /**
+ * v0.7.1: 卡片上传 CTA — 占位态时显示 + 上传按钮。
+ * - image 卡（character/scene/prop）：accept=image/*
+ * - audio 卡：accept=audio/*
+ * 上传后通过 onUpload(dataUrl, file) 回调写到 node.result。
+ */
+export function UploadFallback({
+  accept,
+  label,
+  onUpload,
+}: {
+  accept: string
+  label: string
+  onUpload: (dataUrl: string, file: File) => void
+}): JSX.Element {
+  const handleChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.currentTarget.files?.[0]
+      event.currentTarget.value = ''
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = (loadEvent) => {
+        const dataUrl = loadEvent.target?.result
+        if (typeof dataUrl === 'string') onUpload(dataUrl, file)
+      }
+      reader.readAsDataURL(file)
+    },
+    [onUpload],
+  )
+  return (
+    <label
+      className={cn(
+        'flex flex-col items-center justify-center w-full h-full gap-1 cursor-pointer',
+        'text-nomi-ink-60 hover:text-nomi-ink hover:bg-nomi-ink-05/50 transition-colors',
+      )}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <span className="text-[13px] font-medium tabular-nums">+ 上传{label}</span>
+      <span className="text-[11px] text-nomi-ink-40">或选中后输入提示词生成</span>
+      <input className="hidden" type="file" accept={accept} onChange={handleChange} />
+    </label>
+  )
+}
+
+/**
  * 取节点的"placeholder 标签"
  * shots → "分镜 NN"（由 BaseGenerationNode 接管，不走这里）
  * 其它 → 分类名 / fallback title

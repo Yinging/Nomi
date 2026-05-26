@@ -117,6 +117,8 @@ export default function TimelineClip({ clip }: TimelineClipProps): JSX.Element {
     'shadow-[inset_0_1px_0_rgba(255,255,255,0.62)] cursor-grab select-none active:cursor-grabbing',
     clip.type === 'image' && 'border border-[color-mix(in_srgb,var(--workbench-accent)_22%,transparent)] bg-[var(--workbench-accent-soft)]',
     clip.type === 'video' && 'border border-[color-mix(in_srgb,var(--workbench-video)_24%,transparent)] bg-[var(--workbench-video-soft)]',
+    // v0.7.1: audio clip 视觉（紫色调，与 video 区分）
+    clip.type === 'audio' && 'border border-[color-mix(in_srgb,var(--nomi-accent)_24%,transparent)] bg-[var(--nomi-accent-soft)]',
   )
 
   const selectedClasses = isSelected ? cn(

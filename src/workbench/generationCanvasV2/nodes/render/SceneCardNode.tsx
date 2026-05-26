@@ -9,7 +9,8 @@ import { cn } from '../../../../utils/cn'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { readSceneMeta } from '../../model/nodeMetaFields'
 import { useNodeUsageCount, useNodeVariantCount } from '../../hooks/useNodeRelationships'
-import { STRIPED_BG_CLASS, UsageDot, VariantChip, PlaceholderCenter } from './CardCommon'
+import { STRIPED_BG_CLASS, UsageDot, VariantChip, UploadFallback } from './CardCommon'
+import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 
 type Props = {
   node: GenerationCanvasNode
@@ -19,7 +20,14 @@ export default function SceneCardNode({ node }: Props): JSX.Element {
   const meta = readSceneMeta(node)
   const usageCount = useNodeUsageCount(node.id, node.title)
   const variantCount = useNodeVariantCount(node.id)
+  const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const hasImage = Boolean(node.result?.url)
+
+  const handleUpload = React.useCallback((dataUrl: string) => {
+    updateNode(node.id, {
+      result: { id: `upload-${Date.now()}`, type: 'image', url: dataUrl, createdAt: Date.now() },
+    })
+  }, [node.id, updateNode])
 
   return (
     <div className={cn('relative w-full h-full rounded-nomi overflow-hidden bg-nomi-paper')}>
@@ -33,7 +41,7 @@ export default function SceneCardNode({ node }: Props): JSX.Element {
             draggable={false}
           />
         ) : (
-          <PlaceholderCenter label={node.title || '场景'} />
+          <UploadFallback accept="image/*" label="场景图" onUpload={handleUpload} />
         )}
       </div>
 

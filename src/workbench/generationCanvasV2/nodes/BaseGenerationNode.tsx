@@ -16,6 +16,7 @@ import {
   TIMELINE_GENERATION_NODE_DRAG_MIME,
 } from '../../timeline/timelineDragPayload'
 import { clientXToFrame } from '../../timeline/timelineEdit'
+import { getTrackTypeForClipType } from '../../timeline/timelineTypes'
 import { buildClipFromGenerationNode } from '../model/buildClipFromGenerationNode'
 import { canRunGenerationNode, rerunGenerationNodeAsNewNode, runGenerationNode } from '../runner/generationRunController'
 import { WorkbenchButton } from '../../../design'
@@ -183,7 +184,7 @@ function findTimelineDropTarget(clientX: number, clientY: number): HTMLElement |
   return element.closest(TIMELINE_TRACK_CLIPS_SELECTOR)
 }
 
-export default function BaseGenerationNode({ node, selected, readOnly = false, focusFlash = false }: BaseGenerationNodeProps): JSX.Element {
+function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash = false }: BaseGenerationNodeProps): JSX.Element {
   const selectNode = useGenerationCanvasStore((state) => state.selectNode)
   const captureHistory = useGenerationCanvasStore((state) => state.captureHistory)
   const commitPersistedChange = useGenerationCanvasStore((state) => state.commitPersistedChange)
@@ -391,7 +392,7 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
         startFrame,
       })
       if (clip) {
-        useWorkbenchStore.getState().addTimelineClipAtFrame(clip, clip.type, startFrame)
+        useWorkbenchStore.getState().addTimelineClipAtFrame(clip, getTrackTypeForClipType(clip.type), startFrame)
         if (!dragStart?.multi) {
           moveNode(node.id, {
             x: dragStart?.x ?? node.position.x,
@@ -433,7 +434,7 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
       startFrame,
     })
     if (!clip) return
-    useWorkbenchStore.getState().addTimelineClipAtFrame(clip, clip.type, startFrame)
+    useWorkbenchStore.getState().addTimelineClipAtFrame(clip, getTrackTypeForClipType(clip.type), startFrame)
   }
 
   const handleResizePointerDown = (direction: ResizeDirection) => (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -539,9 +540,24 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
       : clampNumber(Math.round(node.meta.previewHeight), 120, 520)
     : null
   const hasResult = Boolean(node.result?.url)
-  const previewHeight = storedPreviewHeight ?? clampNumber(size.height, 120, 520)
+  // v0.7.1: 卡片模式按 spec 强制固定宽度（cards-design-v1 §4），非卡片走原逻辑
+  const CARD_FIXED_WIDTH: Record<string, number> = {
+    'character-card': 200,
+    'scene-card': 320,
+    'prop-card': 200,
+    'audio-strip': 420,
+  }
+  const CARD_FIXED_HEIGHT: Record<string, number | null> = {
+    'character-card': null, // 动态：宽/比例
+    'scene-card': null,
+    'prop-card': null,
+    'audio-strip': 80,
+  }
+  const cardFixedWidth = isCardKind && renderKind ? CARD_FIXED_WIDTH[renderKind] : null
+  const cardFixedHeight = isCardKind && renderKind ? CARD_FIXED_HEIGHT[renderKind] : null
+  const previewHeight = cardFixedHeight ?? storedPreviewHeight ?? clampNumber(size.height, 120, 520)
   const visualSize = {
-    width: Math.max(MIN_NODE_WIDTH, size.width),
+    width: cardFixedWidth ?? Math.max(MIN_NODE_WIDTH, size.width),
     height: previewHeight,
   }
   const isGenerating = status === 'queued' || status === 'running'
@@ -1096,11 +1112,11 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
         </div>
       ) : null}
 
-      {/* E.2.1: composer 渲染分两种模式：
+      {/* E.2.1 + v0.7.1: composer 渲染分两种模式：
           - inline (shots 分类): 作为 flex child 嵌入 card 下半部分 (Mura 设计)
-          - floating (其它分类 + selected): 仍 absolute 浮在节点下方（保持现有行为）
-          one JSX, conditional positioning via className/style. */}
-      {!isCardKind && (isInlineComposer || (selected && !readOnly && node.kind !== 'panorama')) ? (
+          - floating (其它分类 + selected, 含 4 类卡片): absolute 浮在节点下方
+          v0.7 误屏蔽了 4 类卡的 composer (!isCardKind)，v0.7.1 修正：卡片选中也弹 composer。 */}
+      {(isInlineComposer || (selected && !readOnly && node.kind !== 'panorama')) ? (
         <div
           className={cn(
             'generation-canvas-v2-node__composer',
@@ -1212,3 +1228,14 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
     </article>
   )
 }
+
+// v0.7.1 perf: memo wrap — node 引用稳定时跳过 rerender。
+// 父级 GenerationCanvas 须保证 node 是 zustand store 里同一引用（zustand immer 默认就是）。
+const BaseGenerationNode = React.memo(BaseGenerationNodeImpl, (prev, next) =>
+  prev.node === next.node &&
+  prev.selected === next.selected &&
+  prev.readOnly === next.readOnly &&
+  prev.focusFlash === next.focusFlash,
+)
+BaseGenerationNode.displayName = 'BaseGenerationNode'
+export default BaseGenerationNode
