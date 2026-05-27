@@ -76,18 +76,31 @@ function readJson(key: string): unknown {
     }
 }
 
+// v0.7.6: 之前 localStorage 配额耗尽时静默丢失 — 创作工具的高风险体验问题
+// 现在驱逐 backup 重试失败后抛错，让调用方决定如何提示用户（通常会冒泡到 onSaveError → toast）
+export class ProjectStorageQuotaError extends Error {
+  readonly key: string;
+  constructor(key: string, cause?: unknown) {
+    super(`Local storage quota exceeded while saving "${key}"`);
+    this.name = "ProjectStorageQuotaError";
+    this.key = key;
+    if (cause instanceof Error) this.stack = cause.stack;
+  }
+}
+
 function writeJson(key: string, value: unknown): void {
     if (typeof window === "undefined") return;
     const serialized = JSON.stringify(value);
     try {
         window.localStorage.setItem(key, serialized);
-    } catch {
+    } catch (firstError) {
         // quota exceeded — evict oldest backups and retry once
         evictOldBackups();
         try {
             window.localStorage.setItem(key, serialized);
-        } catch {
-            /* give up silently */
+        } catch (retryError) {
+            // 不再静默 — 上抛，让 persistence 层 onSaveError 走 toast 通知用户
+            throw new ProjectStorageQuotaError(key, retryError);
         }
     }
 }

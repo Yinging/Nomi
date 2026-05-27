@@ -2,6 +2,7 @@ import { app } from "electron";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { hardenedFetch, hardenedFetchText } from "./hardenedFetch";
 import { generateText, streamText, tool } from "ai";
 import { z } from "zod";
 import { buildAiSdkModel } from "./ai/buildAiSdkModel";
@@ -1092,16 +1093,20 @@ export function importModelCatalogPackage(payload: unknown): unknown {
 export async function fetchModelCatalogDocs(payload: unknown): Promise<unknown> {
   const targetUrl = String((payload as JsonRecord)?.url || "").trim();
   if (!/^https?:\/\//i.test(targetUrl)) throw new Error("http/https url is required");
-  const response = await fetch(targetUrl);
-  const contentType = response.headers.get("content-type") || "";
-  const html = await response.text();
+  // v0.7.6: hardenedFetch — 拦私网 + 超时 + 限制大小
+  const fetched = await hardenedFetchText(targetUrl, {
+    timeoutMs: 15_000,
+    maxBytes: 5 * 1024 * 1024, // 文档抓取 5MB 上限够用
+  });
+  const html = fetched.text;
+  const contentType = fetched.contentType;
   const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() || null;
   const text = html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   const max = 120000;
   return {
     url: targetUrl,
-    finalUrl: response.url,
-    status: response.status,
+    finalUrl: fetched.finalUrl,
+    status: fetched.status,
     contentType,
     title,
     text: text.slice(0, max),
@@ -1355,10 +1360,14 @@ export async function importRemoteAsset(payload: unknown): Promise<unknown> {
     return writeAsset(projectId, parsed.bytes, String(raw.fileName || `asset-${Date.now()}.${ext}`), parsed.contentType, { kind: raw.kind || "generated", originalUrl: null });
   }
   if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s), data, and nomi-local assets are supported");
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Asset download failed: ${response.status}`);
-  const contentType = response.headers.get("content-type") || "application/octet-stream";
-  const bytes = Buffer.from(await response.arrayBuffer());
+  // v0.7.6: hardenedFetch — 资产下载需要更大上限（视频/图片），但仍拦私网 + 超时
+  const fetched = await hardenedFetch(url, {
+    timeoutMs: 60_000,
+    maxBytes: 200 * 1024 * 1024, // 200MB 资产上限
+    allowContentTypes: ["image/", "video/", "audio/", "application/octet-stream"],
+  });
+  const contentType = fetched.contentType || "application/octet-stream";
+  const bytes = fetched.bytes;
   const ext = extensionFromMime(contentType, extensionFromUrl(url));
   const fileName = String(raw.fileName || path.basename(new URL(url).pathname) || `asset-${Date.now()}.${ext}`);
   return writeAsset(projectId, bytes, fileName.includes(".") ? fileName : `${fileName}.${ext}`, contentType, {
