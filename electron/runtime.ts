@@ -1265,6 +1265,20 @@ export function commitOnboardedModelToCatalog(payload: {
       }))
     : [];
 
+  // Project the agent-detected fields into model.meta.parameters so the node UI
+  // can render them. The UI reads parameters/upload-slots exclusively from
+  // model.meta (parseModelParameterControls); onboarding.fields is only an
+  // evidence snapshot. Without this projection the model lands in the catalog
+  // but shows zero parameters and no image-url upload slots on the node.
+  // The shape parseParameterControl expects: { key, label, type, options, default }.
+  const metaParameters = onboardingFields.map((f) => ({
+    key: f.key,
+    label: f.displayName || f.key,
+    type: f.type,
+    ...(f.options ? { options: f.options } : {}),
+    ...(f.default !== undefined ? { default: f.default } : {}),
+  }));
+
   const model = upsertModelCatalogModel({
     modelKey,
     vendorKey,
@@ -1272,6 +1286,7 @@ export function commitOnboardedModelToCatalog(payload: {
     labelZh: modelDisplayName,
     kind: billingKind,
     enabled: true,
+    meta: { parameters: metaParameters },
     onboarding: {
       addedVia: "agent",
       trialId: String(outcome.trialId || ""),
@@ -2043,9 +2058,30 @@ async function requestJson(
   } catch {
     json = text;
   }
-  if (!response.ok) {
-    const record = isJsonRecord(json) ? json : {};
-    throw new Error(firstString(record.message, record.error, readNestedRecord(record, ["error", "message"]), `Provider request failed: ${response.status}`));
+  const record = isJsonRecord(json) ? json : {};
+  // Many providers (kie.ai and other Java/Spring backends) return HTTP 200 with
+  // a logical-error envelope `{ code: 4xx/5xx, msg/message: "..." }` instead of
+  // a real error status. Treat that as a failure too, otherwise we'd hand a
+  // body with no asset URL to the result builder and report a silent dud.
+  const logicalCode = (() => {
+    const c = record.code;
+    if (typeof c === "number" && c >= 400 && c < 600) return c;
+    if (typeof c === "string" && /^\d{3}$/.test(c) && Number(c) >= 400) return Number(c);
+    return null;
+  })();
+  if (!response.ok || logicalCode != null) {
+    const upstreamMsg = firstString(
+      record.msg,
+      record.message,
+      record.error,
+      readNestedRecord(record, ["error", "message"]),
+      readNestedRecord(record, ["data", "msg"]),
+    );
+    const statusLabel = logicalCode != null ? `code ${logicalCode}` : `HTTP ${response.status}`;
+    // "No message available" is Spring's default placeholder — surface the URL
+    // and status so the failure is diagnosable instead of opaque.
+    const detail = upstreamMsg && upstreamMsg !== "No message available" ? upstreamMsg : `(no detail from provider)`;
+    throw new Error(`Provider request failed (${statusLabel}) at ${vendor.key} ${upperMethod} ${url}: ${detail}`);
   }
   return json;
 }
