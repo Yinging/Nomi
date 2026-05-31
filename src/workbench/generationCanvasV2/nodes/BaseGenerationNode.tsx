@@ -1,5 +1,5 @@
 import React from 'react'
-import { IconCopy, IconGripVertical, IconGrid3x3, IconInfoCircle, IconLayoutGrid, IconMaximize, IconUpload } from '@tabler/icons-react'
+import { IconCopy, IconCrop, IconGripVertical, IconGrid3x3, IconInfoCircle, IconLayoutGrid, IconMaximize, IconUpload } from '@tabler/icons-react'
 import ProvenancePanel from './ProvenancePanel'
 import { ErrorBadge } from './ErrorBadge'
 import { getBuiltinCategoryById } from '../../project/projectCategories'
@@ -7,6 +7,7 @@ import CharacterCardNode from './render/CharacterCardNode'
 import SceneCardNode from './render/SceneCardNode'
 import PropCardNode from './render/PropCardNode'
 import AudioStripNode from './render/AudioStripNode'
+import ImageCropOverlay, { type CropRect } from './render/ImageCropOverlay'
 import { cn } from '../../../utils/cn'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useWorkbenchStore } from '../../workbenchStore'
@@ -183,6 +184,28 @@ async function splitImageIntoGrid(url: string, gridSize: ImageGridSize): Promise
   return tiles
 }
 
+async function cropImageRegion(
+  url: string,
+  rect: { x: number; y: number; w: number; h: number },
+): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  if (typeof document === 'undefined') return null
+  const image = await loadImageForCanvas(url)
+  const imageWidth = image.naturalWidth || image.width
+  const imageHeight = image.naturalHeight || image.height
+  if (!imageWidth || !imageHeight) return null
+  const sx = clampNumber(Math.round(rect.x * imageWidth), 0, imageWidth - 1)
+  const sy = clampNumber(Math.round(rect.y * imageHeight), 0, imageHeight - 1)
+  const sw = clampNumber(Math.round(rect.w * imageWidth), 1, imageWidth - sx)
+  const sh = clampNumber(Math.round(rect.h * imageHeight), 1, imageHeight - sy)
+  const canvas = document.createElement('canvas')
+  canvas.width = sw
+  canvas.height = sh
+  const context = canvas.getContext('2d')
+  if (!context) return null
+  context.drawImage(image, sx, sy, sw, sh, 0, 0, sw, sh)
+  return { dataUrl: canvas.toDataURL('image/png'), width: sw, height: sh }
+}
+
 function findTimelineDropTarget(clientX: number, clientY: number): HTMLElement | null {
   // v0.7.3 fix: elementsFromPoint (plural) 返回所有重叠元素，
   // 跳过被拖动的卡片本身（topmost）找下方的时间轴。
@@ -235,6 +258,7 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
   const panoramaFullscreenRef = React.useRef<(() => void) | null>(null)
   const panoramaFourViewRef = React.useRef<(() => void) | null>(null)
   const [splittingGridSize, setSplittingGridSize] = React.useState<ImageGridSize | null>(null)
+  const [cropMode, setCropMode] = React.useState(false)
   // E11: provenance viewer open state (mounted into node header for AI-generated assets)
   const [provenanceOpen, setProvenanceOpen] = React.useState(false)
   const dragStartRef = React.useRef<{
@@ -342,11 +366,6 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
       const pullsEast = resizeStart.direction.includes('e')
       const pullsNorth = resizeStart.direction.includes('n')
       const pullsSouth = resizeStart.direction.includes('s')
-      const nextWidth = pullsWest
-        ? clampNumber(resizeStart.width - deltaX, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
-        : pullsEast
-          ? clampNumber(resizeStart.width + deltaX, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
-          : resizeStart.width
       // Compute the stored media aspect ratio (image or video)
       const mediaAspect = (
         typeof node.meta?.imageAspectRatio === 'number' && node.meta.imageAspectRatio > 0
@@ -355,15 +374,47 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
             ? node.meta.videoAspectRatio
             : null
       )
-      // When only width changes (E/W handles) and we know the aspect ratio, keep proportions
-      const widthOnlyResize = (pullsEast || pullsWest) && !pullsNorth && !pullsSouth
-      const nextHeight = pullsNorth
-        ? clampNumber(resizeStart.height - deltaY, MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
-        : pullsSouth
-          ? clampNumber(resizeStart.height + deltaY, MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
-          : (widthOnlyResize && mediaAspect)
-            ? clampNumber(Math.round(nextWidth / mediaAspect), MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
+      let nextWidth: number
+      let nextHeight: number
+      if (mediaAspect) {
+        // 等比缩放：任意把手（含四角/上下边）都锁图片比例，拉完不留空框。
+        // 水平把手（含四角）以宽为主导，纯上下把手以高为主导；触界时按比例回算另一维。
+        if (pullsEast || pullsWest) {
+          nextWidth = clampNumber(
+            pullsWest ? resizeStart.width - deltaX : resizeStart.width + deltaX,
+            MIN_NODE_WIDTH,
+            MAX_NODE_WIDTH,
+          )
+          nextHeight = Math.round(nextWidth / mediaAspect)
+          if (nextHeight < MIN_NODE_HEIGHT || nextHeight > MAX_NODE_HEIGHT) {
+            nextHeight = clampNumber(nextHeight, MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
+            nextWidth = clampNumber(Math.round(nextHeight * mediaAspect), MIN_NODE_WIDTH, MAX_NODE_WIDTH)
+          }
+        } else {
+          nextHeight = clampNumber(
+            pullsNorth ? resizeStart.height - deltaY : resizeStart.height + deltaY,
+            MIN_NODE_HEIGHT,
+            MAX_NODE_HEIGHT,
+          )
+          nextWidth = Math.round(nextHeight * mediaAspect)
+          if (nextWidth < MIN_NODE_WIDTH || nextWidth > MAX_NODE_WIDTH) {
+            nextWidth = clampNumber(nextWidth, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
+            nextHeight = clampNumber(Math.round(nextWidth / mediaAspect), MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
+          }
+        }
+      } else {
+        // 无媒体比例（未生成）：保持自由拉伸
+        nextWidth = pullsWest
+          ? clampNumber(resizeStart.width - deltaX, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
+          : pullsEast
+            ? clampNumber(resizeStart.width + deltaX, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
+            : resizeStart.width
+        nextHeight = pullsNorth
+          ? clampNumber(resizeStart.height - deltaY, MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
+          : pullsSouth
+            ? clampNumber(resizeStart.height + deltaY, MIN_NODE_HEIGHT, MAX_NODE_HEIGHT)
             : resizeStart.height
+      }
       updateNode(node.id, {
         position: {
           x: pullsWest ? resizeStart.x + resizeStart.width - nextWidth : resizeStart.x,
@@ -722,6 +773,66 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
     visualSize.width,
   ])
 
+  // 裁剪：不在原图上做破坏式操作，而是从原图「跳出」一个新节点（对齐宫格截图原则）。
+  // 原节点零改动；新裁剪节点是普通 image 节点，可再缩放/再裁剪/拖时间线/当参考。
+  const handleCropConfirm = React.useCallback(async (rect: CropRect) => {
+    const imageUrl = node.result?.type === 'image' ? node.result.url : undefined
+    setCropMode(false)
+    if (!imageUrl) return
+    try {
+      const cropped = await cropImageRegion(imageUrl, rect)
+      if (!cropped) return
+      const createdAt = Date.now()
+      const preferredWidth = clampNumber(visualSize.width, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
+      const newSize = imageGridTileNodeSize(cropped.width, cropped.height, preferredWidth)
+      const cropNode = addNode({
+        kind: 'image',
+        title: `${node.title || '图片'} 裁剪`,
+        prompt: '图片裁剪',
+        position: {
+          x: Math.round(node.position.x + visualSize.width + 80),
+          y: Math.round(node.position.y),
+        },
+        select: true,
+      })
+      const result = {
+        id: `image-crop-${cropNode.id}-${createdAt}`,
+        type: 'image' as const,
+        url: cropped.dataUrl,
+        createdAt,
+      }
+      updateNode(cropNode.id, {
+        result,
+        history: [result],
+        status: 'success',
+        ...(newSize ? { size: { width: newSize.width, height: newSize.height } } : {}),
+        meta: {
+          ...(cropNode.meta || {}),
+          source: 'image-crop',
+          sourceNodeId: node.id,
+          localOnly: true,
+          imageWidth: cropped.width,
+          imageHeight: cropped.height,
+          imageAspectRatio: cropped.width / Math.max(1, cropped.height),
+          previewHeight: newSize?.previewHeight,
+        },
+      })
+      storeConnectNodes(node.id, cropNode.id, 'reference')
+    } catch {
+      // Crop can fail if the source image cannot be loaded into a canvas due to CORS.
+    }
+  }, [
+    addNode,
+    node.id,
+    node.position.x,
+    node.position.y,
+    node.result,
+    node.title,
+    storeConnectNodes,
+    updateNode,
+    visualSize.width,
+  ])
+
   return (
     <article
       className={cn(
@@ -897,6 +1008,24 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
             <IconGrid3x3 size={16} stroke={1.8} />
             <span>九宫格截图</span>
           </button>
+          <span className={cn('w-px h-[22px] bg-[rgba(18,24,38,0.1)]')} />
+          <button
+            className={cn(
+              'inline-flex items-center justify-center gap-[7px]',
+              'min-w-0 min-h-[34px] px-[11px] border-0 rounded-[9px]',
+              'bg-transparent text-nomi-ink-80 font-[inherit] text-[13px] leading-none whitespace-nowrap cursor-pointer',
+              'hover:bg-nomi-ink-05 hover:text-nomi-ink',
+              'disabled:opacity-[0.45] disabled:cursor-wait',
+            )}
+            type="button"
+            aria-label="裁剪图片"
+            title="裁剪（裁出一个新节点，原图保留）"
+            disabled={cropMode || splittingGridSize !== null}
+            onClick={() => setCropMode(true)}
+          >
+            <IconCrop size={16} stroke={1.8} />
+            <span>裁剪</span>
+          </button>
         </div>
       ) : null}
 
@@ -1069,6 +1198,13 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
             )}
           </div>
         )}
+        {cropMode && node.kind === 'image' && node.result?.type === 'image' && node.result.url ? (
+          <ImageCropOverlay
+            imageUrl={node.result.url}
+            onConfirm={(rect) => { void handleCropConfirm(rect) }}
+            onCancel={() => setCropMode(false)}
+          />
+        ) : null}
       </div>
 
       {canSendToTimeline ? (
