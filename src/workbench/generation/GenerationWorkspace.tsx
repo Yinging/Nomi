@@ -1,7 +1,6 @@
 import React from 'react'
 import { cn } from '../../utils/cn'
 import TimelinePanel from '../timeline/TimelinePanel'
-import CategorySidebar from '../sidebar/CategorySidebar'
 
 type GenerationWorkspaceProps = {
   canvas: React.ReactNode
@@ -27,17 +26,14 @@ export default function GenerationWorkspace({
       data-ai-layout={aiSidebar ? aiLayout : 'none'}
       aria-label="生成区"
     >
-      {/* E.2C-29: CategorySidebar 从 WorkbenchShell 下沉到生成区内部，
-          这样创作 / 预览 step 切换时 sidebar 不再共享显示。 */}
+      {/* E.2C-29 → 左侧面板重做: 分类导航已下沉到 WorkbenchShell 的
+          ProjectExplorerSidebar「分类」tab（CategoryTree），生成区内不再单独挂载。 */}
       <div className={cn(
         'workbench-generation__canvas',
         'min-w-0 min-h-0 overflow-hidden border-b border-[var(--workbench-border)]',
-        'flex',
+        'relative',
       )}>
-        <CategorySidebar />
-        <div className="flex-1 min-w-0 min-h-0 relative">
-          {canvas}
-        </div>
+        {canvas}
       </div>
       {aiSidebar ? (
         <aside className={cn(

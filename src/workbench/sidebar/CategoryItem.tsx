@@ -8,12 +8,14 @@ type Props = {
   count: number
   active: boolean
   collapsed: boolean
+  /** 展开态——决定行首 ▾/▸ 朝向。收起模式（collapsed）下不显示。 */
+  expanded?: boolean
   onActivate: () => void
   onDropNode?: (nodeId: string) => void
   onContextMenu?: (event: React.MouseEvent<HTMLButtonElement>) => void
 }
 
-export default function CategoryItem({ category, count, active, collapsed, onActivate, onDropNode, onContextMenu }: Props): JSX.Element {
+export default function CategoryItem({ category, count, active, collapsed, expanded = false, onActivate, onDropNode, onContextMenu }: Props): JSX.Element {
   const [dragOver, setDragOver] = React.useState(false)
 
   const handleDragOver = React.useCallback((event: React.DragEvent<HTMLButtonElement>) => {
@@ -50,7 +52,7 @@ export default function CategoryItem({ category, count, active, collapsed, onAct
       data-active={active ? 'true' : 'false'}
       title={collapsed ? `${category.name} (${count})` : undefined}
       className={cn(
-        'w-full flex items-center gap-2 px-2 py-2 text-left rounded-md transition-colors',
+        'w-full flex items-center gap-2 px-2 py-1.5 text-left rounded-md transition-colors',
         'text-[12px] leading-tight border border-transparent',
         active
           ? 'bg-nomi-accent/10 text-nomi-accent border-nomi-accent/30'
@@ -59,6 +61,9 @@ export default function CategoryItem({ category, count, active, collapsed, onAct
         collapsed && 'justify-center px-0',
       )}
     >
+      {!collapsed ? (
+        <span className="w-3 shrink-0 text-[10px] text-nomi-ink-40" aria-hidden>{expanded ? '▾' : '▸'}</span>
+      ) : null}
       {(() => {
         const Icon = getCategoryIcon(category.iconName)
         return <Icon size={16} stroke={1.5} className="shrink-0" aria-hidden />

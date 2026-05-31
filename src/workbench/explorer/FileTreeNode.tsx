@@ -2,6 +2,7 @@ import React from 'react'
 import { cn } from '../../utils/cn'
 import type { WorkspaceFileNode } from '../../../electron/workspace/workspaceFileIndex'
 import { getDesktopBridge } from '../../desktop/bridge'
+import { WORKSPACE_FILE_DRAG_MIME, type WorkspaceFileDragPayload } from './workspaceFileDrag'
 
 type Props = {
   node: WorkspaceFileNode
@@ -39,16 +40,28 @@ export default function FileTreeNode({ node, projectId, depth = 0 }: Props): JSX
     }
   }, [node.kind, node.relativePath, projectId])
 
+  // 仅图片可拖进画布（画布创建图片节点）。文件已在项目里，拖拽只传引用，不重新导入。
+  const draggable = node.kind === 'image' && Boolean(projectId)
+  const handleDragStart = React.useCallback((event: React.DragEvent<HTMLButtonElement>) => {
+    if (!draggable) return
+    const payload: WorkspaceFileDragPayload = { projectId, relativePath: node.relativePath, name: node.name, kind: node.kind }
+    event.dataTransfer.setData(WORKSPACE_FILE_DRAG_MIME, JSON.stringify(payload))
+    event.dataTransfer.effectAllowed = 'copy'
+  }, [draggable, node.kind, node.name, node.relativePath, projectId])
+
   return (
     <div>
       <button
         type="button"
+        draggable={draggable}
+        onDragStart={handleDragStart}
         onClick={selectOrToggle}
         onDoubleClick={reveal}
         className={cn(
           'w-full h-7 flex items-center gap-1 rounded px-1 text-left text-[12px]',
           'text-nomi-ink-60 hover:text-nomi-ink hover:bg-nomi-bg',
           selected && 'bg-nomi-bg text-nomi-ink',
+          draggable && 'cursor-grab active:cursor-grabbing',
         )}
         style={{ paddingLeft: 6 + depth * 12 }}
         title={node.relativePath}

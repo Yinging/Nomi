@@ -24,9 +24,12 @@ type SidebarMenuPayload =
 
 const DEFAULT_GROUP_COLOR = '#d8c3a5'
 
-export default function CategorySidebar({ categories }: Props): JSX.Element {
-  const collapsed = useWorkbenchStore((s) => s.sidebarCollapsed)
-  const toggle = useWorkbenchStore((s) => s.toggleSidebarCollapsed)
+/**
+ * 分类导航的完整内容（分类 → 节点/子组、右键菜单、跨分类拖拽、点节点定位画布）。
+ * 不含 aside/折叠/标题外壳——外壳由承载它的 Tab 面板（ProjectExplorerSidebar）提供。
+ * 仅在面板展开 + 「分类」tab 激活时挂载，故始终按展开态渲染。
+ */
+export default function CategoryTree({ categories }: Props): JSX.Element {
   const activeCategoryId = useWorkbenchStore((s) => s.activeCategoryId)
   const setActiveCategoryId = useWorkbenchStore((s) => s.setActiveCategoryId)
   const nodes = useGenerationCanvasStore((s) => s.nodes)
@@ -140,6 +143,16 @@ export default function CategorySidebar({ categories }: Props): JSX.Element {
       return next
     })
   }, [setActiveCategoryId])
+
+  // 整行点击：与「文件」tab 的文件夹 / 子组一致——点哪都能收放。
+  // 分类多一层导航语义：点未激活的分类 → 切到它并展开；点已激活的 → 收放它的树。
+  const handleCategoryRowClick = React.useCallback((categoryId: string) => {
+    if (activeCategoryId !== categoryId) {
+      handleActivateCategory(categoryId)
+      return
+    }
+    toggleCategory(categoryId)
+  }, [activeCategoryId, handleActivateCategory, toggleCategory])
 
   const handleSelectNode = React.useCallback((nodeId: string) => {
     selectNode(nodeId)
@@ -293,28 +306,6 @@ export default function CategorySidebar({ categories }: Props): JSX.Element {
 
   return (
     <>
-    <aside
-      data-collapsed={collapsed ? 'true' : 'false'}
-      className={cn(
-        'flex flex-col h-full min-h-0 border-r border-nomi-line bg-nomi-paper',
-        'transition-[width] duration-150 ease-out',
-        collapsed ? 'w-[60px]' : 'w-[240px]',
-      )}
-      aria-label="项目分类"
-    >
-      <div className={cn('flex items-center px-2 py-2 border-b border-nomi-line', collapsed ? 'justify-center' : 'justify-between')}>
-        {collapsed ? null : (
-          <span className="text-[11px] uppercase tracking-wider text-nomi-ink-40">分类</span>
-        )}
-        <button
-          type="button"
-          onClick={toggle}
-          className="text-nomi-ink-40 hover:text-nomi-ink p-1 rounded text-[12px]"
-          aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
-        >
-          {collapsed ? '›' : '‹'}
-        </button>
-      </div>
       <nav className="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-1">
         {visible.map((cat) => {
           const categoryNodes = nodesByCategory.get(cat.id) || []
@@ -324,31 +315,17 @@ export default function CategorySidebar({ categories }: Props): JSX.Element {
           const expanded = expandedCategoryIds.has(cat.id)
           return (
             <div key={cat.id} className="flex flex-col gap-1">
-              <div className="flex items-center gap-1">
-                {!collapsed ? (
-                  <button
-                    type="button"
-                    onClick={() => toggleCategory(cat.id)}
-                    className="grid h-7 w-5 place-items-center rounded text-[10px] text-nomi-ink-40 hover:bg-nomi-ink-05 hover:text-nomi-ink"
-                    aria-label={expanded ? `折叠${cat.name}` : `展开${cat.name}`}
-                    aria-expanded={expanded}
-                  >
-                    {expanded ? '▾' : '▸'}
-                  </button>
-                ) : null}
-                <div className="min-w-0 flex-1">
-                  <CategoryItem
-                    category={cat}
-                    count={counts.get(cat.id) || 0}
-                    active={activeCategoryId === cat.id}
-                    collapsed={collapsed}
-                    onActivate={() => handleActivateCategory(cat.id)}
-                    onDropNode={(nodeId) => handleDropNodeOnCategory(nodeId, cat.id)}
-                    onContextMenu={(event) => openMenu(event, { type: 'category', categoryId: cat.id })}
-                  />
-                </div>
-              </div>
-              {!collapsed && expanded ? (
+              <CategoryItem
+                category={cat}
+                count={counts.get(cat.id) || 0}
+                active={activeCategoryId === cat.id}
+                collapsed={false}
+                expanded={expanded}
+                onActivate={() => handleCategoryRowClick(cat.id)}
+                onDropNode={(nodeId) => handleDropNodeOnCategory(nodeId, cat.id)}
+                onContextMenu={(event) => openMenu(event, { type: 'category', categoryId: cat.id })}
+              />
+              {expanded ? (
                 <div className="ml-5 flex flex-col gap-1 border-l border-nomi-line/70 pl-2">
                   {looseNodes.map((node) => (
                     <NodeItem
@@ -387,7 +364,7 @@ export default function CategorySidebar({ categories }: Props): JSX.Element {
           )
         })}
       </nav>
-      <div className={cn('px-2 py-2 border-t border-nomi-line', collapsed && 'hidden')}>
+      <div className="px-2 py-2 border-t border-nomi-line">
         <button
           type="button"
           onClick={() => handleCreateGroup(activeCategoryId)}
@@ -400,8 +377,7 @@ export default function CategorySidebar({ categories }: Props): JSX.Element {
           + 新子组
         </button>
       </div>
-    </aside>
-    {renderContextMenu()}
+      {renderContextMenu()}
     </>
   )
 }

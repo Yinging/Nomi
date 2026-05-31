@@ -7,6 +7,7 @@ import { cn } from '../../../utils/cn'
 import CanvasToolbar, { NodeAddMenu } from './CanvasToolbar'
 import { importImageFilesToGenerationCanvas } from '../adapters/assetImportAdapter'
 import { getDesktopBridge } from '../../../desktop/bridge'
+import { WORKSPACE_FILE_DRAG_MIME, buildWorkspaceFileUrl, parseWorkspaceFileDrag } from '../../explorer/workspaceFileDrag'
 import { EDGE_MODE_LABEL } from '../model/graphOps'
 import type { GenerationCanvasNode, GenerationNodeKind, NodeGroup } from '../model/generationCanvasTypes'
 import { getGenerationNodeComponent } from '../nodes/renderRegistry'
@@ -635,17 +636,41 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
 
   const handleStageDrop = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (readOnly) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const basePosition = {
+      x: (event.clientX - rect.left - offset.x) / zoom,
+      y: (event.clientY - rect.top - offset.y) / zoom,
+    }
+
+    // 1) 项目文件树拖入：文件已在项目里，直接用 nomi-local 协议引用，创建图片节点。
+    const workspaceDrag = parseWorkspaceFileDrag(event.dataTransfer.getData(WORKSPACE_FILE_DRAG_MIME))
+    if (workspaceDrag) {
+      event.preventDefault()
+      event.stopPropagation()
+      const url = buildWorkspaceFileUrl(workspaceDrag.projectId, workspaceDrag.relativePath)
+      const store = useGenerationCanvasStore.getState()
+      const node = store.addNode({
+        kind: 'image',
+        title: workspaceDrag.name.replace(/\.[^.]+$/, '') || '本地素材',
+        prompt: '',
+        position: { x: Math.max(40, Math.round(basePosition.x)), y: Math.max(40, Math.round(basePosition.y)) },
+      })
+      const result = { id: `workspace-${node.id}-${Date.now()}`, type: 'image' as const, url, createdAt: Date.now() }
+      store.updateNode(node.id, {
+        result,
+        history: [result],
+        status: 'success',
+        meta: { ...(node.meta || {}), source: 'workspace-file', fileName: workspaceDrag.name, workspaceRelativePath: workspaceDrag.relativePath },
+      })
+      return
+    }
+
+    // 2) OS 文件拖入：复制进项目并上传，创建图片节点。
     const files = Array.from(event.dataTransfer.files || []).filter((file) => file.type.startsWith('image/'))
     if (!files.length) return
     event.preventDefault()
     event.stopPropagation()
-    const rect = event.currentTarget.getBoundingClientRect()
-    void importImageFilesToGenerationCanvas(files, {
-      basePosition: {
-        x: (event.clientX - rect.left - offset.x) / zoom,
-        y: (event.clientY - rect.top - offset.y) / zoom,
-      },
-    })
+    void importImageFilesToGenerationCanvas(files, { basePosition })
   }, [offset, readOnly, zoom])
 
   const handleStagePanStart = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -913,7 +938,8 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
           onContextMenu={handleStageContextMenu}
           onDragOver={(event) => {
             if (readOnly) return
-            if (Array.from(event.dataTransfer.types).includes('Files')) {
+            const types = Array.from(event.dataTransfer.types)
+            if (types.includes('Files') || types.includes(WORKSPACE_FILE_DRAG_MIME)) {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'copy'
             }

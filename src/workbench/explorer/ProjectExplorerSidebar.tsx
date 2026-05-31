@@ -1,9 +1,8 @@
 import React from 'react'
 import { cn } from '../../utils/cn'
-import { BUILTIN_CATEGORIES, type ProjectCategory } from '../project/projectCategories'
+import { type ProjectCategory } from '../project/projectCategories'
 import { useWorkbenchStore, type WorkspaceMode } from '../workbenchStore'
-import { useGenerationCanvasStore } from '../generationCanvasV2/store/generationCanvasStore'
-import CategoryItem from '../sidebar/CategoryItem'
+import CategoryTree from '../sidebar/CategoryTree'
 import WorkspaceFileExplorerPanel from './WorkspaceFileExplorerPanel'
 
 type Props = {
@@ -20,26 +19,6 @@ export default function ProjectExplorerSidebar({ categories, projectId = null, w
   }, [preferredTab])
   const collapsed = useWorkbenchStore((s) => s.sidebarCollapsed)
   const toggle = useWorkbenchStore((s) => s.toggleSidebarCollapsed)
-  const activeCategoryId = useWorkbenchStore((s) => s.activeCategoryId)
-  const setActiveCategoryId = useWorkbenchStore((s) => s.setActiveCategoryId)
-  const nodes = useGenerationCanvasStore((s) => s.nodes)
-  const reassignCategory = useGenerationCanvasStore((s) => s.reassignNodeCategory)
-
-  const visible = React.useMemo(() => {
-    return (categories && categories.length ? categories : BUILTIN_CATEGORIES)
-      .filter((c) => !c.isHidden)
-      .slice()
-      .sort((a, b) => a.order - b.order)
-  }, [categories])
-
-  const counts = React.useMemo(() => {
-    const map = new Map<string, number>()
-    for (const node of nodes) {
-      const id = node.categoryId || 'inbox'
-      map.set(id, (map.get(id) || 0) + 1)
-    }
-    return map
-  }, [nodes])
 
   return (
     <aside
@@ -70,18 +49,7 @@ export default function ProjectExplorerSidebar({ categories, projectId = null, w
       ) : tab === 'files' ? (
         <WorkspaceFileExplorerPanel projectId={projectId} />
       ) : (
-        <>
-          <nav className="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-1">
-            {visible.map((cat) => (
-              <CategoryItem key={cat.id} category={cat} count={counts.get(cat.id) || 0} active={activeCategoryId === cat.id} collapsed={false} onActivate={() => setActiveCategoryId(cat.id)} onDropNode={(nodeId) => reassignCategory(nodeId, cat.id)} />
-            ))}
-          </nav>
-          <div className="px-2 py-2 border-t border-nomi-line">
-            <button type="button" disabled className="w-full px-2 py-1.5 text-[12px] rounded-md border border-dashed border-nomi-line text-nomi-ink-40 cursor-not-allowed" title="自定义分类将在 Phase F 落地">
-              + 新分类
-            </button>
-          </div>
-        </>
+        <CategoryTree categories={categories} />
       )}
     </aside>
   )

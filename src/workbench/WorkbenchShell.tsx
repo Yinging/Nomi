@@ -96,8 +96,7 @@ export default function WorkbenchShell({ generation, generationAi, generationAiL
         onRenameProject={onRenameProject}
       />
 
-      {/* E.2C-29: CategorySidebar 已下沉到 GenerationWorkspace 内部。
-          创作 / 预览 step 不再显示左侧分类目录树（spec 决策：只有生成区需要分类切换）。 */}
+      {/* 左侧面板重做: 分类导航 + 文件树统一收进 ProjectExplorerSidebar 的双 Tab。 */}
       <main className={cn(
         'workbench-shell__body',
         'relative min-w-0 min-h-0 overflow-hidden flex',
