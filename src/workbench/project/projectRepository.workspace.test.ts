@@ -95,4 +95,41 @@ describe('projectRepository workspace project creation', () => {
     expect(record?.payload.workbenchDocument.version).toBe(1)
     expect(record?.payload.timeline.tracks).toHaveLength(2)
   })
+
+  it('opens a freshly-initialized workspace (minimal payload) as an empty default project', () => {
+    // Regression: "打开文件夹" on an existing folder writes a minimal manifest
+    // payload (just { rootPath }) with no workbenchDocument/timeline/canvas.
+    // The renderer used to throw "本地项目记录损坏" → hydrate rejected silently
+    // → the project card "打不开". It must now open as an empty project.
+    const emptyManifest = {
+      id: 'ws-music',
+      name: 'Music',
+      version: 2,
+      createdAt: 1,
+      updatedAt: 1,
+      savedAt: 1,
+      revision: 0,
+      lastKnownRootPath: '/Users/me/Music',
+      payload: { rootPath: '/Users/me/Music' },
+    }
+    const read = vi.fn(() => emptyManifest)
+    mockedGetDesktopBridge.mockReturnValue({
+      platform: 'darwin',
+      workspace: {} as never,
+      projects: { read } as never,
+      cost: {} as never,
+      assets: {} as never,
+      exports: {} as never,
+      tasks: {} as never,
+      agents: {} as never,
+      modelCatalog: {} as never,
+    })
+
+    const record = readLocalProject('ws-music')
+
+    expect(record).toMatchObject({ id: 'ws-music', name: 'Music', version: 1 })
+    expect(record?.payload.workbenchDocument.version).toBe(1)
+    expect(record?.payload.timeline.tracks.length).toBeGreaterThan(0)
+    expect(Array.isArray(record?.payload.generationCanvas.nodes)).toBe(true)
+  })
 })

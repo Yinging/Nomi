@@ -280,6 +280,30 @@ function normalizePayload(input: unknown): WorkbenchProjectPayload {
     };
 }
 
+/**
+ * True when the raw record carries any persisted creation content. A workspace
+ * that was initialized by "打开文件夹" on an existing folder (but never saved)
+ * has a minimal manifest payload (just `{ rootPath }`) and none of these fields.
+ */
+function recordHasPersistedContent(raw: unknown): boolean {
+    if (!raw || typeof raw !== "object") return false;
+    const rec = raw as Record<string, unknown>;
+    const containers: Array<Record<string, unknown> | undefined> = [
+        rec,
+        rec.payload && typeof rec.payload === "object"
+            ? (rec.payload as Record<string, unknown>)
+            : undefined,
+    ];
+    return containers.some((container) =>
+        Boolean(
+            container &&
+                (container.workbenchDocument ||
+                    container.timeline ||
+                    container.generationCanvas),
+        ),
+    );
+}
+
 function normalizeRecord(
     summary: WorkbenchProjectSummary,
     raw: unknown,
@@ -289,6 +313,17 @@ function normalizeRecord(
         return {
             ...legacyParsed.data,
             payload: normalizePayload(legacyParsed.data.payload),
+        };
+    }
+    // Freshly-initialized workspace (existing folder opened via "打开文件夹",
+    // never saved): its manifest payload is minimal (just rootPath). Open it as
+    // an empty project with default payload instead of throwing 记录损坏 and
+    // failing to open silently.
+    if (!recordHasPersistedContent(raw)) {
+        return {
+            ...summary,
+            version: 1,
+            payload: createDefaultWorkbenchProjectPayload(),
         };
     }
     const legacy = normalizeLegacyRecord(raw);
