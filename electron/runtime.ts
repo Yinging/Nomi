@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { hardenedFetch, hardenedFetchText } from "./hardenedFetch";
-import { generateText, streamText, tool } from "ai";
+import { generateText, streamText, tool, type CoreMessage, type LanguageModelV1 } from "ai";
 import { z } from "zod";
 import { buildAiSdkModel } from "./ai/buildAiSdkModel";
 import { mergeMissingParamsIntoBody } from "./ai/onboarding/curlBlueprint";
@@ -19,6 +19,10 @@ import {
   plannedNodeSchema,
   type CanvasToolName,
 } from "./ai/canvasTools";
+import {
+  documentTools,
+  type DocumentToolName,
+} from "./ai/documentTools";
 import {
   type AuthType,
   appendQueryParams,
@@ -1151,7 +1155,13 @@ export function listModelCatalogMappings(params?: unknown): Mapping[] {
  * vendors only — query/x-api-key auth isn't a chat-completions shape.
  */
 export function resolveOnboardingAgentFromCatalog():
-  | { providerKind: AiSdkProviderKind; baseUrl: string; modelId: string; apiKey: string }
+  | {
+      providerKind: AiSdkProviderKind;
+      baseUrl: string;
+      modelId: string;
+      apiKey: string;
+      extraHeaders?: Record<string, string>;
+    }
   | null {
   const state = readCatalog();
   for (const model of state.models) {
@@ -1160,11 +1170,13 @@ export function resolveOnboardingAgentFromCatalog():
     if (!vendor || !vendor.baseUrlHint) continue;
     const apiKey = decryptApiKeyRecord(state.apiKeysByVendor[vendor.key]);
     if (!apiKey) continue;
+    const extraHeaders = extractVendorExtraHeaders(vendor);
     return {
       providerKind: normalizeProviderKind(vendor.providerKind),
       baseUrl: vendor.baseUrlHint,
       modelId: model.modelKey,
       apiKey,
+      ...(extraHeaders ? { extraHeaders } : {}),
     };
   }
   return null;
@@ -1290,6 +1302,9 @@ export function commitOnboardedModelToCatalog(payload: {
   userApiKey: string;
   /** Optional display label override; otherwise we use draft.modelDisplayName. */
   displayLabel?: string;
+  /** How this model was added. Defaults to "agent" (the doc-reader path). The
+   *  manual BaseURL entry passes "manual" so the catalog records provenance honestly. */
+  addedVia?: "agent" | "manual";
 }): Model {
   const outcome = payload?.outcome as JsonRecord | null;
   if (!outcome || typeof outcome !== "object") throw new Error("outcome required");
@@ -1320,7 +1335,8 @@ export function commitOnboardedModelToCatalog(payload: {
   const auth = (draft.vendorAuth || {}) as JsonRecord;
   const authType = (auth.type as Vendor["authType"]) || "bearer";
 
-  // 1. vendor
+  // 1. vendor — carry draft.vendorMeta through so the manual-entry form's custom
+  // request headers (vendorMeta.extraHeaders) persist and reach buildAiSdkModel.
   upsertModelCatalogVendor({
     key: vendorKey,
     name: vendorName,
@@ -1330,6 +1346,7 @@ export function commitOnboardedModelToCatalog(payload: {
     authQueryParam: auth.queryParam || null,
     providerKind: draft.vendorProviderKind || "openai-compatible",
     enabled: true,
+    ...(draft.vendorMeta !== undefined ? { meta: draft.vendorMeta } : {}),
   });
 
   // 2. apiKey (auto-encrypted by upsert)
@@ -1371,7 +1388,7 @@ export function commitOnboardedModelToCatalog(payload: {
     enabled: true,
     meta: { parameters: metaParameters },
     onboarding: {
-      addedVia: "agent",
+      addedVia: payload.addedVia ?? "agent",
       trialId: String(outcome.trialId || ""),
       docsUrl: String(outcome.docsUrl || ""),
       addedAt: nowIso(),
@@ -1402,6 +1419,120 @@ export function commitOnboardedModelToCatalog(payload: {
   }
 
   return model;
+}
+
+/**
+ * Derive a stable vendorKey from a BaseURL host. Same host → same vendor (so
+ * re-adding models under the same endpoint merges, per upsert semantics).
+ * localhost/127.0.0.1 include the port so Ollama(11434) and ComfyUI(8188) don't
+ * collide as one "localhost" vendor.
+ */
+export function deriveVendorKeyFromBaseUrl(baseUrl: string): string {
+  let host = "";
+  let port = "";
+  try {
+    const u = new URL(baseUrl);
+    host = u.hostname;
+    port = u.port;
+  } catch {
+    return "";
+  }
+  let seed = host;
+  if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
+    seed = `local-${port || "80"}`;
+  }
+  return seed.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase();
+}
+
+/**
+ * Manual provider entry — the PRIMARY model-adding path (BaseURL + key + models).
+ * Deterministic: for a standard OpenAI-compatible text endpoint the whole catalog
+ * shape is known, so no doc-reading AI is needed (that breaks the bootstrap
+ * deadlock where the doc-reader itself required a pre-existing text model).
+ *
+ * Reuses the SINGLE write path (commitOnboardedModelToCatalog) — N models = one
+ * vendor + N model upserts. Text/chat models run via the direct AI SDK path
+ * (buildAiSdkModel → createOpenAICompatible), so we deliberately emit NO HTTP
+ * mapping here: a fabricated /chat/completions mapping would be unused dead data.
+ *
+ * No connectivity test in this flow (aligns with opencode): local/custom
+ * endpoints vary in tolerance; storing-then-failing-at-call-time is honest and
+ * doesn't block legitimate models. A separate, non-blocking test exists.
+ */
+export function commitManualOpenAiCompatibleModels(payload: {
+  vendorName: string;
+  baseUrl: string;
+  apiKey: string;
+  models: Array<{ id: string; displayName?: string }>;
+  /** Endpoint shape. Defaults to "openai-compatible" (the common case). "anthropic"
+   *  routes text/chat through the Messages API (createAnthropic, x-api-key). */
+  providerKind?: AiSdkProviderKind;
+  /** Extra request headers for relay/proxy gateways, persisted on the vendor and
+   *  replayed on every model call via buildAiSdkModel. */
+  headers?: Record<string, string>;
+}): { vendorKey: string; committed: Array<{ modelKey: string; displayName: string }> } {
+  const rawBaseUrl = String(payload?.baseUrl || "").trim();
+  const apiKey = String(payload?.apiKey || "").trim();
+  const providerKind = normalizeProviderKind(payload?.providerKind);
+  // Anthropic offers a hosted default; an OpenAI-compatible endpoint must be told.
+  // For anthropic with a blank field we fill in the canonical host so the vendor
+  // always has a concrete baseUrlHint (the doc-reader + commit path require one).
+  const baseUrl =
+    providerKind === "anthropic" && !rawBaseUrl ? "https://api.anthropic.com" : rawBaseUrl;
+  if (!/^https?:\/\//i.test(baseUrl)) throw new Error("接入地址需以 http:// 或 https:// 开头");
+  if (!apiKey) throw new Error("API Key 不能为空");
+
+  const vendorKey = deriveVendorKeyFromBaseUrl(baseUrl);
+  if (!vendorKey) throw new Error("无法从接入地址解析出供应商标识");
+
+  const vendorName = String(payload?.vendorName || "").trim() || vendorKey;
+
+  // Clean custom headers: trim, drop blanks. Stored on vendor.meta.extraHeaders.
+  const cleanHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(payload?.headers || {})) {
+    const key = String(k || "").trim();
+    const value = String(v ?? "").trim();
+    if (key && value) cleanHeaders[key] = value;
+  }
+  const vendorMeta =
+    Object.keys(cleanHeaders).length > 0 ? { extraHeaders: cleanHeaders } : undefined;
+
+  const rawModels = Array.isArray(payload?.models) ? payload.models : [];
+  const seen = new Set<string>();
+  const cleanModels = rawModels
+    .map((m) => ({ id: String(m?.id || "").trim(), displayName: String(m?.displayName || "").trim() }))
+    .filter((m) => {
+      if (!m.id || seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+  if (cleanModels.length === 0) throw new Error("至少填写一个模型 id");
+
+  const committed: Array<{ modelKey: string; displayName: string }> = [];
+  for (const m of cleanModels) {
+    const displayName = m.displayName || m.id;
+    const outcome = {
+      status: "success",
+      trialId: "",
+      docsUrl: "",
+      draft: {
+        vendorKey,
+        vendorName,
+        vendorBaseUrl: baseUrl,
+        vendorAuth: { type: providerKind === "anthropic" ? ("x-api-key" as const) : ("bearer" as const) },
+        vendorProviderKind: providerKind,
+        ...(vendorMeta ? { vendorMeta } : {}),
+        modelKey: m.id,
+        modelDisplayName: displayName,
+        targetKind: "text" as const,
+        modelFields: [],
+      },
+    };
+    commitOnboardedModelToCatalog({ outcome, userApiKey: apiKey, addedVia: "manual" });
+    committed.push({ modelKey: m.id, displayName });
+  }
+
+  return { vendorKey, committed };
 }
 
 export function upsertModelCatalogModel(payload: unknown): Model {
@@ -2485,6 +2616,47 @@ function chooseTextModel(): { vendor: Vendor; model: Model; apiKey: string } {
   throw new Error("No local text model is configured. Open model settings and add an API key.");
 }
 
+/**
+ * Read user-supplied custom request headers off a vendor. Stored under
+ * `vendor.meta.extraHeaders` (a string→string map) by the manual-entry form so
+ * relay/proxy gateways that need an extra auth header work without us hardcoding
+ * per-provider knowledge. Returns undefined when none are set.
+ */
+export function extractVendorExtraHeaders(vendor: Vendor): Record<string, string> | undefined {
+  const meta = vendor.meta as JsonRecord | undefined;
+  const raw = meta?.extraHeaders;
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const k = String(key || "").trim();
+    const v = String(value ?? "").trim();
+    if (k && v) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Single vendor→LanguageModel construction path. Both runAgentChat and
+ * runAgentChatV2 (and any future caller) go through here so provider-kind,
+ * baseURL shaping, and custom headers stay consistent (Rule 1: no parallel
+ * versions). anthropic uses the vendor's baseUrlHint verbatim (or the SDK
+ * default when blank); openai-compatible appends /v1.
+ */
+function buildLanguageModelForVendor(vendor: Vendor, model: Model, apiKey: string): LanguageModelV1 {
+  const providerKind = normalizeProviderKind(vendor.providerKind);
+  const baseURL = providerKind === "anthropic"
+    ? (vendor.baseUrlHint || "").trim()
+    : endpoint(vendor, "/v1");
+  const headers = extractVendorExtraHeaders(vendor);
+  return buildAiSdkModel({
+    kind: providerKind,
+    baseURL,
+    apiKey,
+    modelId: model.modelAlias || model.modelKey,
+    ...(headers ? { headers } : {}),
+  });
+}
+
 export async function runAgentChat(payload: unknown): Promise<unknown> {
   const raw = payload as JsonRecord;
   const { vendor, model, apiKey } = chooseTextModel();
@@ -2498,17 +2670,7 @@ export async function runAgentChat(payload: unknown): Promise<unknown> {
   const systemParts = [AGENT_LANGUAGE_DIRECTIVE, systemPrompt, skillSystemPrompt].filter((part) => part && part.length > 0);
   const system = systemParts.length > 0 ? systemParts.join("\n\n") : undefined;
 
-  const providerKind: AiSdkProviderKind = vendor.providerKind || "openai-compatible";
-  const baseURL = providerKind === "anthropic"
-    ? (vendor.baseUrlHint || "").trim()
-    : endpoint(vendor, "/v1");
-
-  const languageModel = buildAiSdkModel({
-    kind: providerKind,
-    baseURL,
-    apiKey,
-    modelId: model.modelAlias || model.modelKey,
-  });
+  const languageModel = buildLanguageModelForVendor(vendor, model, apiKey);
 
   const result = await generateText({
     model: languageModel,
@@ -2543,11 +2705,15 @@ export async function runAgentChat(payload: unknown): Promise<unknown> {
 // user confirms or rejects the proposed tool call.
 // ---------------------------------------------------------------------------
 
+// A tool call may target either the generation-canvas tool group or the
+// creation-document tool group; the engine picks the group by skillKey.
+export type AgentToolName = CanvasToolName | DocumentToolName;
+
 export type AgentChatV2Event =
   | { type: "content-delta"; delta: string }
-  | { type: "tool-call"; toolCallId: string; toolName: CanvasToolName; args: unknown }
-  | { type: "tool-result"; toolCallId: string; toolName: CanvasToolName; result: unknown }
-  | { type: "tool-error"; toolCallId: string; toolName: CanvasToolName; message: string }
+  | { type: "tool-call"; toolCallId: string; toolName: AgentToolName; args: unknown }
+  | { type: "tool-result"; toolCallId: string; toolName: AgentToolName; result: unknown }
+  | { type: "tool-error"; toolCallId: string; toolName: AgentToolName; message: string }
   | { type: "step-finish"; finishReason: string }
   | { type: "finish"; finishReason: string; usage?: unknown }
   | { type: "error"; message: string };
@@ -2566,47 +2732,58 @@ export type AgentChatV2Hooks = {
    */
   awaitToolConfirmation: (call: {
     toolCallId: string;
-    toolName: CanvasToolName;
+    toolName: AgentToolName;
     args: unknown;
   }) => Promise<AgentToolConfirmation>;
 };
 
+// Wraps a tool descriptor so every invocation routes through the
+// human-in-the-loop confirmation channel: emit `tool-call`, await the user's
+// decision, then emit `tool-result` / `tool-error` and feed a structured
+// result back to the model. Shared by both the canvas and document tool groups.
+function makeAgentTool<TParams extends z.ZodTypeAny>(
+  hooks: AgentChatV2Hooks,
+  toolName: AgentToolName,
+  description: string,
+  parameters: TParams,
+) {
+  return tool({
+    description,
+    parameters,
+    execute: async (args: unknown, opts: { toolCallId: string }) => {
+      hooks.emit({ type: "tool-call", toolCallId: opts.toolCallId, toolName, args });
+      const confirmation = await hooks.awaitToolConfirmation({
+        toolCallId: opts.toolCallId,
+        toolName,
+        args,
+      });
+      if (!confirmation.ok) {
+        hooks.emit({
+          type: "tool-error",
+          toolCallId: opts.toolCallId,
+          toolName,
+          message: confirmation.message,
+        });
+        // Surface as a structured tool result so the LLM can gracefully stop.
+        return { ok: false as const, error: confirmation.message };
+      }
+      hooks.emit({
+        type: "tool-result",
+        toolCallId: opts.toolCallId,
+        toolName,
+        result: confirmation.result,
+      });
+      return { ok: true as const, result: confirmation.result };
+    },
+  });
+}
+
 function buildCanvasToolsForV2(hooks: AgentChatV2Hooks) {
-  function makeTool<TParams extends z.ZodTypeAny>(
+  const makeTool = <TParams extends z.ZodTypeAny>(
     toolName: CanvasToolName,
     description: string,
     parameters: TParams,
-  ) {
-    return tool({
-      description,
-      parameters,
-      execute: async (args: unknown, opts: { toolCallId: string }) => {
-        hooks.emit({ type: "tool-call", toolCallId: opts.toolCallId, toolName, args });
-        const confirmation = await hooks.awaitToolConfirmation({
-          toolCallId: opts.toolCallId,
-          toolName,
-          args,
-        });
-        if (!confirmation.ok) {
-          hooks.emit({
-            type: "tool-error",
-            toolCallId: opts.toolCallId,
-            toolName,
-            message: confirmation.message,
-          });
-          // Surface as a structured tool result so the LLM can gracefully stop.
-          return { ok: false as const, error: confirmation.message };
-        }
-        hooks.emit({
-          type: "tool-result",
-          toolCallId: opts.toolCallId,
-          toolName,
-          result: confirmation.result,
-        });
-        return { ok: true as const, result: confirmation.result };
-      },
-    });
-  }
+  ) => makeAgentTool(hooks, toolName, description, parameters);
 
   return {
     read_canvas_state: makeTool(
@@ -2653,6 +2830,40 @@ function buildCanvasToolsForV2(hooks: AgentChatV2Hooks) {
   } as const;
 }
 
+// Creation-area document tools. We reuse the zod schemas + descriptions from
+// `documentTools` (the source of truth) but wrap each in the v2 confirmation
+// channel via `makeAgentTool`. read_* tools auto-confirm on the renderer; the
+// write tools (insert/replace/append) surface a confirmation card.
+function buildDocumentToolsForV2(hooks: AgentChatV2Hooks) {
+  const make = (name: DocumentToolName) =>
+    makeAgentTool(
+      hooks,
+      name,
+      documentTools[name].description ?? name,
+      documentTools[name].parameters as z.ZodTypeAny,
+    );
+
+  return {
+    read_full_text: make("read_full_text"),
+    read_selection: make("read_selection"),
+    insert_at_cursor: make("insert_at_cursor"),
+    replace_selection: make("replace_selection"),
+    append_to_end: make("append_to_end"),
+  } as const;
+}
+
+// Tool-group selector: creation-area skills (workbench.creation.*) get the
+// document tools; everything else (generation / storyboard / default) gets the
+// canvas tools. One engine, parameterized tool group.
+function buildToolsForSkill(skillKey: string | undefined, hooks: AgentChatV2Hooks) {
+  if (typeof skillKey === "string" && skillKey.startsWith("workbench.creation.")) {
+    return buildDocumentToolsForV2(hooks);
+  }
+  const { _kindSchema, ...canvasTools } = buildCanvasToolsForV2(hooks);
+  void _kindSchema;
+  return canvasTools;
+}
+
 export type RunAgentChatV2Payload = {
   prompt: string;
   displayPrompt?: string;
@@ -2663,7 +2874,46 @@ export type RunAgentChatV2Payload = {
   chatContext?: unknown;
   mode?: string;
   temperature?: number;
+  /**
+   * Shared conversation memory key. Both workbench panels use
+   * `nomi:workbench:<projectId|local>` so the agent remembers across turns and
+   * across the creation / generation areas. Omitted = no memory (one-shot).
+   */
+  sessionKey?: string;
+  /** Drop any stored history for this sessionKey before running ("新对话"). */
+  resetSession?: boolean;
 };
+
+// In-memory conversation history, keyed by sessionKey. Lives only for the app
+// session (cleared on quit). Capped per key so prompts can't grow unbounded.
+const AGENT_HISTORY_MAX_MESSAGES = 30;
+const agentChatV2History = new Map<string, CoreMessage[]>();
+
+/** Drop stored history for a session (or all sessions when no key given). */
+export function clearAgentChatV2History(sessionKey?: string): void {
+  if (sessionKey && sessionKey.trim()) {
+    agentChatV2History.delete(sessionKey.trim());
+  } else {
+    agentChatV2History.clear();
+  }
+}
+
+/**
+ * Cap stored history to the most recent N messages. Slicing can decapitate a
+ * tool-call/tool-result pair, so after trimming we also drop any leading
+ * `tool` messages (orphaned results the provider would reject) — and the
+ * assistant tool-call message they belonged to, advancing to the next clean
+ * `user` boundary if needed.
+ */
+function capAgentHistory(messages: CoreMessage[]): CoreMessage[] {
+  let trimmed = messages.length > AGENT_HISTORY_MAX_MESSAGES
+    ? messages.slice(messages.length - AGENT_HISTORY_MAX_MESSAGES)
+    : messages;
+  while (trimmed.length > 0 && trimmed[0].role === "tool") {
+    trimmed = trimmed.slice(1);
+  }
+  return trimmed;
+}
 
 export async function runAgentChatV2(
   payload: RunAgentChatV2Payload,
@@ -2677,29 +2927,28 @@ export async function runAgentChatV2(
   const systemParts = [AGENT_LANGUAGE_DIRECTIVE, systemPrompt, skillSystemPrompt].filter((part) => part && part.length > 0);
   const system = systemParts.length > 0 ? systemParts.join("\n\n") : undefined;
 
-  const providerKind: AiSdkProviderKind = vendor.providerKind || "openai-compatible";
-  const baseURL = providerKind === "anthropic"
-    ? (vendor.baseUrlHint || "").trim()
-    : endpoint(vendor, "/v1");
+  const languageModel = buildLanguageModelForVendor(vendor, model, apiKey);
 
-  const languageModel = buildAiSdkModel({
-    kind: providerKind,
-    baseURL,
-    apiKey,
-    modelId: model.modelAlias || model.modelKey,
-  });
+  // Pick the tool group by skill: creation-area skills get document tools,
+  // everything else gets canvas tools. The canonical skill key lives in
+  // chatContext.skill.key; fall back to the top-level payload.skillKey.
+  const resolvedSkillKey =
+    readRequestedSkill(payload as unknown as JsonRecord).key || trim(payload.skillKey);
+  const tools = buildToolsForSkill(resolvedSkillKey, hooks);
 
-  // Strip the private `_kindSchema` slot before handing to the SDK — it's only
-  // used internally to keep the import live; the SDK only expects tool
-  // descriptors.
-  const allTools = buildCanvasToolsForV2(hooks);
-  const { _kindSchema, ...tools } = allTools;
-  void _kindSchema;
+  // Replay stored history for this session so the agent remembers prior turns
+  // (within a panel and across the creation / generation areas, which share a
+  // sessionKey). "新对话" sends resetSession to wipe it first.
+  const sessionKey = trim(payload.sessionKey);
+  if (sessionKey && payload.resetSession) agentChatV2History.delete(sessionKey);
+  const priorMessages = sessionKey ? agentChatV2History.get(sessionKey) ?? [] : [];
+  const userMessage: CoreMessage = { role: "user", content: userPrompt };
+  const messages: CoreMessage[] = [...priorMessages, userMessage];
 
   const result = streamText({
     model: languageModel,
     ...(system ? { system } : {}),
-    messages: [{ role: "user", content: userPrompt }],
+    messages,
     temperature: typeof payload.temperature === "number" ? payload.temperature : 0.7,
     tools,
     maxSteps: 5,
@@ -2734,6 +2983,13 @@ export async function runAgentChatV2(
   }
 
   hooks.emit({ type: "finish", finishReason: finalFinish, usage: finalUsage });
+
+  // Persist this turn (user message + everything the model generated, incl.
+  // tool-call / tool-result messages) so the next turn has full context.
+  if (sessionKey) {
+    const generated = (await result.response).messages as CoreMessage[];
+    agentChatV2History.set(sessionKey, capAgentHistory([...priorMessages, userMessage, ...generated]));
+  }
 
   return {
     id: `agent-${crypto.randomUUID()}`,

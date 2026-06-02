@@ -3,7 +3,8 @@ import { IconCursorText, IconFilePlus, IconMovie, IconReplace, IconSend2 } from 
 import { NomiAILabel, NomiLoadingMark, WorkbenchButton, WorkbenchIconButton } from '../../design'
 import ReactMarkdown from 'react-markdown'
 import { cn } from '../../utils/cn'
-import { sendWorkbenchAiMessage } from '../ai/workbenchAiClient'
+import { runWorkbenchAgent, workbenchSessionKey, type ToolCallEvent } from '../ai/workbenchAgentRunner'
+import { clearWorkbenchAgentSession } from '../../api/server'
 import { AiReplyActionButton } from '../ai/AiReplyActionButton'
 import { handleAiComposerKeyDown } from '../ai/aiComposerKeyboard'
 import type { WorkbenchAiMessage } from '../ai/workbenchAiTypes'
@@ -14,15 +15,34 @@ import {
   buildCreationAiPrompt,
   CREATION_AI_MODES,
   extractWorkbenchDocumentText,
-  getCreationDocumentActionLabel,
   getCreationAiMode,
-  parseCreationDocumentAction,
   type CreationAiModeId,
 } from './creationAiModes'
-import type { CreationDocumentAction, CreationDocumentActionType } from '../workbenchTypes'
 import { useTransientScrollingClass } from './useTransientScrollingClass'
 
 const STORYBOARD_REQUEST_PATTERN = /拆镜头|分镜|拆分/
+
+// The creation agent's write tools map 1:1 to the editor's document mutations.
+// Read tools auto-confirm without a card; write tools queue a confirmation card.
+const WRITE_TOOL_NAMES = ['insert_at_cursor', 'replace_selection', 'append_to_end'] as const
+type WriteToolName = (typeof WRITE_TOOL_NAMES)[number]
+
+type PendingDocToolCall = {
+  toolCallId: string
+  toolName: WriteToolName
+  content: string
+  confirm: (decision: { ok: true; result?: unknown } | { ok: false; message?: string }) => Promise<void>
+}
+
+function isWriteTool(name: string): name is WriteToolName {
+  return (WRITE_TOOL_NAMES as readonly string[]).includes(name)
+}
+
+function writeToolLabel(name: WriteToolName): string {
+  if (name === 'insert_at_cursor') return '插入到光标'
+  if (name === 'replace_selection') return '替换选区'
+  return '追加到文末'
+}
 
 function readUrlParam(name: string): string {
   if (typeof window === 'undefined') return ''
@@ -48,6 +68,7 @@ function readWorkbenchAiReplyText(response: unknown): string {
 
 export default function CreationAiPanel(): JSX.Element {
   const [sending, setSending] = React.useState(false)
+  const [pendingToolCalls, setPendingToolCalls] = React.useState<PendingDocToolCall[]>([])
   const messagesScrollRef = useTransientScrollingClass<HTMLDivElement>('workbench-scrollbar-visible')
   const workbenchDocument = useWorkbenchStore((state) => state.workbenchDocument)
   const documentTools = useWorkbenchStore((state) => state.creationDocumentTools)
@@ -63,16 +84,38 @@ export default function CreationAiPanel(): JSX.Element {
   const setWorkspaceMode = useWorkbenchStore((state) => state.setWorkspaceMode)
   const resetConversation = useWorkbenchStore((state) => state.resetCreationAiConversation)
 
+  // Keep a live ref so the tool-call handler always sees the freshest editor
+  // tools without re-creating `send` on every editor remount.
+  const documentToolsRef = React.useRef(documentTools)
+  documentToolsRef.current = documentTools
+
   const activeMode = getCreationAiMode(modeId as CreationAiModeId)
   const documentText = React.useMemo(() => extractWorkbenchDocumentText(workbenchDocument), [workbenchDocument])
 
-  const applyDocumentAction = React.useCallback((action: CreationDocumentAction) => {
-    const content = String(action.content || '').trim()
-    if (!content || !documentTools) return
-    if (action.type === 'insert_at_cursor') documentTools.insertAtCursor(content)
-    if (action.type === 'replace_selection') documentTools.replaceSelection(content)
-    if (action.type === 'append_to_end') documentTools.appendToEnd(content)
-  }, [documentTools])
+  const resolvePending = React.useCallback((
+    toolCallId: string,
+    decision: { ok: true; result?: unknown } | { ok: false; message?: string },
+  ) => {
+    setPendingToolCalls((current) => {
+      const target = current.find((item) => item.toolCallId === toolCallId)
+      if (target) void target.confirm(decision)
+      return current.filter((item) => item.toolCallId !== toolCallId)
+    })
+  }, [])
+
+  // Run the actual editor mutation for an approved write tool, then resolve the
+  // backend tool call so the agent loop can continue.
+  const applyWriteTool = React.useCallback((call: PendingDocToolCall) => {
+    const tools = documentToolsRef.current
+    if (!tools) {
+      void resolvePending(call.toolCallId, { ok: false, message: 'editor_not_ready' })
+      return
+    }
+    if (call.toolName === 'insert_at_cursor') tools.insertAtCursor(call.content)
+    else if (call.toolName === 'replace_selection') tools.replaceSelection(call.content)
+    else tools.appendToEnd(call.content)
+    void resolvePending(call.toolCallId, { ok: true, result: { applied: true } })
+  }, [resolvePending])
 
   const renderMarkdown = React.useCallback((content: string) => (
     <ReactMarkdown
@@ -99,9 +142,9 @@ export default function CreationAiPanel(): JSX.Element {
     </ReactMarkdown>
   ), [])
 
-  const actionIcon = React.useCallback((type: CreationDocumentActionType) => {
-    if (type === 'insert_at_cursor') return <IconCursorText size={13} />
-    if (type === 'replace_selection') return <IconReplace size={13} />
+  const writeToolIcon = React.useCallback((name: WriteToolName) => {
+    if (name === 'insert_at_cursor') return <IconCursorText size={13} />
+    if (name === 'replace_selection') return <IconReplace size={13} />
     return <IconFilePlus size={13} />
   }, [])
 
@@ -135,12 +178,7 @@ export default function CreationAiPanel(): JSX.Element {
       launchStoryboardPlanning(userRequest || '🎬 拆镜头')
       return
     }
-    const prompt = buildCreationAiPrompt({
-      mode: activeMode,
-      userRequest,
-      documentText,
-      selectedText,
-    })
+    const prompt = buildCreationAiPrompt({ mode: activeMode, userRequest })
     const displayPrompt = userRequest || `${activeMode.label}：处理当前文稿`
     const userMessage: WorkbenchAiMessage = {
       id: `creation_ai_user_${Date.now()}`,
@@ -153,33 +191,46 @@ export default function CreationAiPanel(): JSX.Element {
     setError('')
     setSending(true)
     try {
-      const projectId = readUrlParam('projectId')
-      const response = await sendWorkbenchAiMessage(
-        {
-          prompt,
-          displayPrompt,
-          sessionKey: `nomi:creation:${projectId || 'local'}:${activeMode.id}`,
-          projectId,
-          flowId: '',
-          projectName: '',
-          skillKey: `workbench.creation.${activeMode.id}`,
-          skillName: activeMode.title,
-          mode: 'auto',
+      const response = await runWorkbenchAgent({
+        prompt,
+        displayPrompt,
+        sessionKey: workbenchSessionKey(),
+        projectId: readUrlParam('projectId'),
+        skillKey: `workbench.creation.${activeMode.id}`,
+        skillName: activeMode.title,
+        onContent: (_delta, streamedText) => {
+          setMessages((prev) => prev.map((message) => (
+            message.id === pendingId ? { ...message, content: streamedText || '处理中...' } : message
+          )))
         },
-        {
-          onContent: (_delta, streamedText) => {
-            setMessages((prev) => prev.map((message) => (
-              message.id === pendingId ? { ...message, content: streamedText || '处理中...' } : message
-            )))
-          },
+        onToolCall: (event: ToolCallEvent) => {
+          // Read tools auto-execute against the live editor.
+          if (event.toolName === 'read_full_text') {
+            void event.confirm({ ok: true, result: { text: documentToolsRef.current?.readFullText() ?? '' } })
+            return
+          }
+          if (event.toolName === 'read_selection') {
+            void event.confirm({ ok: true, result: { text: documentToolsRef.current?.readSelectionText() ?? '' } })
+            return
+          }
+          // Write tools wait for explicit user approval through a card.
+          if (isWriteTool(event.toolName)) {
+            const args = (event.args && typeof event.args === 'object') ? event.args as Record<string, unknown> : {}
+            const content = typeof args.content === 'string' ? args.content : ''
+            setPendingToolCalls((current) => [...current, {
+              toolCallId: event.toolCallId,
+              toolName: event.toolName as WriteToolName,
+              content,
+              confirm: event.confirm,
+            }])
+            return
+          }
+          void event.confirm({ ok: false, message: `unknown tool ${event.toolName}` })
         },
-      )
+      })
       const reply = readWorkbenchAiReplyText(response) || '（空响应：AI 没有返回文本）'
-      // 通用问答模式是纯聊天，不把回复解析成写文档 action。
-      const documentAction = activeMode.chatOnly ? undefined : (parseCreationDocumentAction(reply) ?? undefined)
-      const assistantContent = documentAction?.content || reply
       setMessages((prev) => prev.map((message) => (
-        message.id === pendingId ? { ...message, content: assistantContent, documentAction } : message
+        message.id === pendingId ? { ...message, content: reply } : message
       )))
     } catch (err) {
       const message = err instanceof Error ? err.message : '创作 AI 调用失败'
@@ -190,7 +241,7 @@ export default function CreationAiPanel(): JSX.Element {
     } finally {
       setSending(false)
     }
-  }, [activeMode, applyDocumentAction, documentText, draft, launchStoryboardPlanning, selectedText, sending])
+  }, [activeMode, documentText, draft, launchStoryboardPlanning, selectedText, sending, setDraft, setError, setMessages])
 
   const suggestions = React.useMemo(() => [
     '一段悬疑开场',
@@ -199,7 +250,10 @@ export default function CreationAiPanel(): JSX.Element {
   ], [])
 
   const handleNewConversation = React.useCallback(() => {
+    setPendingToolCalls([])
     resetConversation()
+    // Wipe the shared backend memory so both areas start a fresh thread.
+    void clearWorkbenchAgentSession(workbenchSessionKey())
   }, [resetConversation])
 
   return (
@@ -244,7 +298,7 @@ export default function CreationAiPanel(): JSX.Element {
         )}
         aria-live="polite"
       >
-        {messages.length === 0 ? (
+        {messages.length === 0 && pendingToolCalls.length === 0 ? (
           <div className={cn('workbench-creation-ai__empty', 'h-full grid place-content-center justify-items-center')}>
             <div className="workbench-creation-ai__empty-title">需要一点灵感？</div>
             <div className="workbench-creation-ai__empty-sub">告诉 AI 你想写什么，它会给你一个开头。</div>
@@ -279,33 +333,52 @@ export default function CreationAiPanel(): JSX.Element {
                 {message.role === 'assistant' && message.content !== '处理中...' && !message.content.startsWith('（错误）') ? (
                   <AiReplyActionButton
                     className="workbench-creation-ai__reply-action"
-                    content={message.documentAction?.content || message.content}
+                    content={message.content}
                   />
                 ) : null}
               </div>
-              {message.role === 'assistant' && message.content !== '处理中...' && !message.content.startsWith('（错误）') ? (
-                <div className={cn('workbench-creation-ai__message-actions', 'flex justify-stretch mt-[10px] pt-2')}>
-                  {message.documentAction ? (
-                    <div className={cn('workbench-creation-ai__tool-preview', 'w-full flex items-center justify-between gap-2')}>
-                      <span className={cn('workbench-creation-ai__tool-name', 'min-w-0 inline-flex items-center gap-[6px]')}>
-                        {actionIcon(message.documentAction.type)}
-                        {getCreationDocumentActionLabel(message.documentAction.type)}
-                      </span>
-                      <WorkbenchButton
-                        className={cn('workbench-creation-ai__message-action', 'inline-flex items-center gap-[5px] px-2 font-inherit cursor-pointer disabled:cursor-not-allowed disabled:opacity-45')}
-                        disabled={!documentTools}
-                        data-primary="true"
-                        onClick={() => applyDocumentAction(message.documentAction!)}
-                      >
-                        <span>应用</span>
-                      </WorkbenchButton>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
             </article>
           ))
         )}
+
+        {pendingToolCalls.length > 0 ? (
+          <div className={cn('workbench-creation-ai__tool-calls', 'flex flex-col gap-2 p-[10px_11px]')}>
+            {pendingToolCalls.map((call) => (
+              <div
+                key={call.toolCallId}
+                className={cn(
+                  'workbench-creation-ai__tool-call',
+                  'flex flex-col gap-2 p-3 rounded-nomi border border-nomi-accent-soft bg-nomi-accent-soft/40',
+                )}
+                data-tool-call-id={call.toolCallId}
+              >
+                <div className={cn('workbench-creation-ai__tool-call-head', 'inline-flex items-center gap-[6px] text-nomi-accent text-[12.5px] font-medium')}>
+                  {writeToolIcon(call.toolName)}
+                  {writeToolLabel(call.toolName)}
+                </div>
+                <div className={cn('workbench-creation-ai__tool-call-body', 'max-h-[160px] overflow-auto text-nomi-ink text-[13px] leading-[1.5] whitespace-pre-wrap')}>
+                  {call.content || '（空内容）'}
+                </div>
+                <div className={cn('flex items-center justify-end gap-2 mt-1')}>
+                  <WorkbenchButton
+                    className={cn('h-7 px-3 rounded-nomi-sm border border-nomi-line bg-nomi-paper text-nomi-ink-80 text-[12px] cursor-pointer hover:bg-nomi-ink-05')}
+                    onClick={() => resolvePending(call.toolCallId, { ok: false, message: 'rejected by user' })}
+                  >
+                    拒绝
+                  </WorkbenchButton>
+                  <WorkbenchButton
+                    className={cn('h-7 px-3 rounded-nomi-sm border-0 bg-nomi-ink text-nomi-paper text-[12px] cursor-pointer hover:bg-nomi-accent disabled:cursor-not-allowed disabled:opacity-45')}
+                    data-primary="true"
+                    disabled={!documentTools}
+                    onClick={() => applyWriteTool(call)}
+                  >
+                    应用
+                  </WorkbenchButton>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       {error ? (

@@ -14,9 +14,11 @@
  * Auto-commits to catalog on success (the IPC handler does it).
  */
 import React from 'react'
-import { Stack, Group, Text, PasswordInput } from '@mantine/core'
+import { Stack, Group, Text, PasswordInput, ActionIcon, Anchor, SegmentedControl, TagsInput, Chip } from '@mantine/core'
+import { IconPlus, IconTrash } from '@tabler/icons-react'
 import { DesignButton, DesignModal, DesignTextInput } from '../../design'
 import { getDesktopBridge } from '../../desktop/bridge'
+import { PROVIDER_PRESETS } from './providerPresets'
 
 type Phase = 'input' | 'running' | 'success' | 'error'
 
@@ -56,8 +58,34 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
 }): JSX.Element {
   const bridge = getDesktopBridge()
   const [phase, setPhase] = React.useState<Phase>('input')
+  // input has two branches: 'manual' is the primary path (BaseURL + key + models,
+  // breaks the bootstrap deadlock, works for local/text models); 'docs' is the
+  // secondary path (AI reads docs) for image/video models with non-standard APIs.
+  const [inputMode, setInputMode] = React.useState<'manual' | 'docs'>('manual')
   const [docsUrl, setDocsUrl] = React.useState('')
   const [userApiKey, setUserApiKey] = React.useState('')
+  // manual-form state
+  const [vendorName, setVendorName] = React.useState('')
+  // Selected provider preset ('' = none yet). Drives auto-fill + whether to show
+  // the 接口类型 toggle (only for custom/none — named presets imply their type).
+  const [presetId, setPresetId] = React.useState('')
+  // Endpoint shape: 'openai-compatible' (default; OpenAI/Kimi/智谱/DeepSeek/中转站)
+  // or 'anthropic' (Claude's native /v1/messages — x-api-key, different body).
+  const [providerKind, setProviderKind] = React.useState<'openai-compatible' | 'anthropic'>('openai-compatible')
+  const [baseUrl, setBaseUrl] = React.useState('')
+  // Model ids only (display name dropped — it defaulted to the id, nobody filled it).
+  // Entered via TagsInput: type+enter for any endpoint, or pick from auto-fetched list.
+  const [models, setModels] = React.useState<string[]>([])
+  // Auto-fetched model ids (GET /models) used as TagsInput autocomplete suggestions.
+  const [fetchedModels, setFetchedModels] = React.useState<string[]>([])
+  const [fetchingModels, setFetchingModels] = React.useState(false)
+  const [fetchModelsMsg, setFetchModelsMsg] = React.useState('')
+  // Custom request headers (key/value) for relay/proxy gateways. Empty by default
+  // so the common case stays clean; the "添加请求头" button reveals a row on demand.
+  const [headerRows, setHeaderRows] = React.useState<Array<{ key: string; value: string }>>([])
+  const [saving, setSaving] = React.useState(false)
+  const [testState, setTestState] = React.useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [testMessage, setTestMessage] = React.useState('')
   const [milestones, setMilestones] = React.useState<Milestone[]>(INITIAL_MILESTONES)
   const [activeMessage, setActiveMessage] = React.useState('正在阅读文档…')
   const [fieldsCount, setFieldsCount] = React.useState(0)
@@ -87,7 +115,129 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
     setErrorReason('')
     setErrorHint('')
     setTraceJson(null)
+    // Keep credentials (vendorName/baseUrl/userApiKey) so "再添加一个" under the
+    // same endpoint is one step; only clear the per-add model picks + test result.
+    setModels([])
+    setTestState('idle')
+    setTestMessage('')
   }, [])
+
+  const updateHeader = React.useCallback((index: number, patch: Partial<{ key: string; value: string }>) => {
+    setHeaderRows(prev => prev.map((h, i) => (i === index ? { ...h, ...patch } : h)))
+    setTestState('idle')
+  }, [])
+  const addHeaderRow = React.useCallback(() => {
+    setHeaderRows(prev => [...prev, { key: '', value: '' }])
+  }, [])
+  const removeHeaderRow = React.useCallback((index: number) => {
+    setHeaderRows(prev => prev.filter((_, i) => i !== index))
+    setTestState('idle')
+  }, [])
+  // Collapse the header rows into a clean {key: value} map (dropping blanks).
+  const buildHeadersObject = React.useCallback((): Record<string, string> => {
+    const out: Record<string, string> = {}
+    for (const h of headerRows) {
+      const k = h.key.trim()
+      const v = h.value.trim()
+      if (k && v) out[k] = v
+    }
+    return out
+  }, [headerRows])
+
+  const handlePickPreset = React.useCallback((id: string) => {
+    const preset = PROVIDER_PRESETS.find(p => p.id === id)
+    if (!preset) return
+    setPresetId(id)
+    setProviderKind(preset.providerKind)
+    setBaseUrl(preset.baseUrl)
+    setVendorName(preset.custom ? '' : preset.label)
+    // Endpoint changed → previously fetched models / test result no longer apply.
+    setFetchedModels([])
+    setFetchModelsMsg('')
+    setTestState('idle')
+  }, [])
+
+  const handleFetchModels = React.useCallback(async () => {
+    if (!bridge?.onboarding?.listModels) return
+    setFetchingModels(true)
+    setFetchModelsMsg('')
+    try {
+      const res = await bridge.onboarding.listModels({
+        baseUrl: baseUrl.trim(),
+        apiKey: userApiKey.trim(),
+        providerKind,
+        headers: buildHeadersObject(),
+      })
+      if (res.ok && res.models && res.models.length > 0) {
+        setFetchedModels(res.models)
+        setFetchModelsMsg(`找到 ${res.models.length} 个，点下方输入框选择`)
+      } else if (res.ok) {
+        setFetchedModels([])
+        setFetchModelsMsg('这个地址没返回模型列表，手填 id 即可')
+      } else {
+        setFetchedModels([])
+        setFetchModelsMsg('拉取不到，手填 id 即可')
+      }
+    } finally {
+      setFetchingModels(false)
+    }
+  }, [bridge, baseUrl, userApiKey, providerKind, buildHeadersObject])
+
+  const handleTestConnection = React.useCallback(async () => {
+    if (!bridge?.onboarding?.testConnection) return
+    setTestState('testing')
+    setTestMessage('')
+    const firstModelId = models.map(m => m.trim()).find(Boolean)
+    const res = await bridge.onboarding.testConnection({
+      baseUrl: baseUrl.trim(),
+      apiKey: userApiKey.trim(),
+      modelId: firstModelId,
+      providerKind,
+      headers: buildHeadersObject(),
+    })
+    if (res.ok) {
+      setTestState('ok')
+      setTestMessage('连接正常')
+    } else {
+      setTestState('fail')
+      setTestMessage(res.error || '连接失败')
+    }
+  }, [bridge, baseUrl, userApiKey, models, providerKind, buildHeadersObject])
+
+  const handleManualSave = React.useCallback(async () => {
+    if (!bridge?.onboarding?.manualCommit) {
+      setErrorReason('当前环境没有桌面端模块，无法运行。')
+      setPhase('error')
+      return
+    }
+    const cleanModels = models
+      .map(m => ({ id: m.trim() }))
+      .filter(m => m.id.length > 0)
+    if (cleanModels.length === 0) return
+    setSaving(true)
+    try {
+      const res = await bridge.onboarding.manualCommit({
+        vendorName: vendorName.trim(),
+        baseUrl: baseUrl.trim(),
+        apiKey: userApiKey.trim(),
+        providerKind,
+        headers: buildHeadersObject(),
+        models: cleanModels,
+      })
+      if (res.ok) {
+        const n = res.committed?.length ?? cleanModels.length
+        setResultLabel(n === 1 ? (res.committed?.[0]?.displayName || cleanModels[0].id) : `${n} 个模型`)
+        setPhase('success')
+        if (res.committed) onCommitted?.(res.committed)
+      } else {
+        setErrorReason('没能保存')
+        setErrorHint(res.error || '请检查接入地址和 API Key')
+        setPhase('error')
+      }
+    } finally {
+      setSaving(false)
+    }
+  }, [bridge, vendorName, baseUrl, userApiKey, models, providerKind, buildHeadersObject, onCommitted])
 
   const handleStart = React.useCallback(async () => {
     if (!bridge?.onboarding) {
@@ -176,6 +326,15 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
   }, [traceJson])
 
   const canStart = docsUrl.trim().length > 0 && userApiKey.trim().length > 0 && phase === 'input'
+  // Anthropic has a hosted default, so a blank BaseURL is allowed there (we fill in
+  // the official host); an OpenAI-compatible endpoint must be supplied.
+  const baseUrlTrimmed = baseUrl.trim()
+  const baseUrlValid = providerKind === 'anthropic'
+    ? (baseUrlTrimmed === '' || /^https?:\/\//i.test(baseUrlTrimmed))
+    : /^https?:\/\//i.test(baseUrlTrimmed)
+  const canTest = baseUrlValid && (providerKind === 'anthropic' || baseUrlTrimmed.length > 0)
+  const hasModelId = models.some(m => m.trim().length > 0)
+  const canSaveManual = baseUrlValid && userApiKey.trim().length > 0 && hasModelId && !saving
 
   return (
     <DesignModal
@@ -192,8 +351,164 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
           <ProgressDots phase={phase} />
         </Group>
 
-        {phase === 'input' && (
+        {phase === 'input' && inputMode === 'manual' && (
           <Stack gap="md">
+            <Field label="供应商" hint="选一个自动填地址；中转站选「自定义」粘贴地址">
+              <Chip.Group value={presetId} onChange={value => handlePickPreset(value as string)}>
+                <Group gap={6}>
+                  {PROVIDER_PRESETS.map(p => (
+                    <Chip key={p.id} value={p.id} size="xs" radius="sm">{p.label}</Chip>
+                  ))}
+                </Group>
+              </Chip.Group>
+            </Field>
+            {(presetId === '' || presetId === 'custom') && (
+              <Field label="接口类型" hint={providerKind === 'anthropic' ? 'Claude 原生接口' : '绝大多数模型都选这个'}>
+                <SegmentedControl
+                  fullWidth
+                  value={providerKind}
+                  onChange={value => { setProviderKind(value as 'openai-compatible' | 'anthropic'); setTestState('idle') }}
+                  data={[
+                    { label: 'OpenAI 兼容', value: 'openai-compatible' },
+                    { label: 'Anthropic 原生', value: 'anthropic' },
+                  ]}
+                />
+              </Field>
+            )}
+            <Field
+              label="接入地址（BaseURL）"
+              hint={providerKind === 'anthropic' ? '留空用官方地址；中转站填它给你的地址' : '到 /v1 为止'}
+            >
+              <DesignTextInput
+                value={baseUrl}
+                onChange={e => { setBaseUrl(e.currentTarget.value); setTestState('idle') }}
+                placeholder={providerKind === 'anthropic' ? 'https://api.anthropic.com（可留空）' : 'https://api.openai.com/v1'}
+                error={baseUrlTrimmed.length > 0 && !baseUrlValid ? '需以 http:// 或 https:// 开头' : undefined}
+                autoFocus
+              />
+            </Field>
+            <Field label="你的 API Key" hint="只存在你的电脑上，加密保存">
+              <PasswordInput
+                value={userApiKey}
+                onChange={e => { setUserApiKey(e.currentTarget.value); setTestState('idle') }}
+                placeholder="sk-..."
+              />
+            </Field>
+
+            <Stack gap={4}>
+              <Group justify="space-between" align="center">
+                <Text size="sm" c="var(--nomi-ink)">模型</Text>
+                <DesignButton
+                  variant="subtle"
+                  onClick={handleFetchModels}
+                  disabled={!canTest || fetchingModels}
+                  loading={fetchingModels}
+                >
+                  拉取可用模型
+                </DesignButton>
+              </Group>
+              <TagsInput
+                value={models}
+                onChange={value => { setModels(value); setTestState('idle') }}
+                data={fetchedModels}
+                placeholder={models.length === 0 ? '输入模型 id 回车，或先拉取可用模型' : undefined}
+                splitChars={[',', ' ', '\n']}
+                clearable
+              />
+              {fetchModelsMsg && <Text size="xs" c="var(--nomi-ink-60)">{fetchModelsMsg}</Text>}
+            </Stack>
+
+            <Stack gap={4}>
+              {headerRows.length > 0 && <Text size="sm" c="var(--nomi-ink)">自定义请求头</Text>}
+              {headerRows.length > 0 && (
+                <Stack gap={6}>
+                  {headerRows.map((h, i) => (
+                    <Group key={i} gap={6} wrap="nowrap" align="flex-start">
+                      <DesignTextInput
+                        value={h.key}
+                        onChange={e => updateHeader(i, { key: e.currentTarget.value })}
+                        placeholder="Header 名，如 HTTP-Referer"
+                        style={{ flex: 1 }}
+                      />
+                      <DesignTextInput
+                        value={h.value}
+                        onChange={e => updateHeader(i, { value: e.currentTarget.value })}
+                        placeholder="值"
+                        style={{ flex: 1 }}
+                      />
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        onClick={() => removeHeaderRow(i)}
+                        aria-label="删除这一行请求头"
+                      >
+                        <IconTrash size={14} />
+                      </ActionIcon>
+                    </Group>
+                  ))}
+                </Stack>
+              )}
+              <Group justify="flex-start">
+                <DesignButton variant="subtle" leftSection={<IconPlus size={14} />} onClick={addHeaderRow}>
+                  添加请求头（可选）
+                </DesignButton>
+              </Group>
+            </Stack>
+
+            <Field label="供应商名称（可选）">
+              <DesignTextInput
+                value={vendorName}
+                onChange={e => setVendorName(e.currentTarget.value)}
+                placeholder="留空则按地址自动命名"
+              />
+            </Field>
+
+            <Group justify="space-between" align="center">
+              <Group gap={8} align="center">
+                <DesignButton
+                  variant="subtle"
+                  onClick={handleTestConnection}
+                  disabled={!canTest || testState === 'testing'}
+                  loading={testState === 'testing'}
+                >
+                  测试连接
+                </DesignButton>
+                {testState === 'ok' && <Text size="xs" c="var(--nomi-ink-60)">✓ {testMessage}</Text>}
+                {testState === 'fail' && <Text size="xs" c="var(--nomi-ink-60)" lineClamp={1}>✗ {testMessage}</Text>}
+              </Group>
+              <DesignButton onClick={handleManualSave} disabled={!canSaveManual} loading={saving}>
+                保存
+              </DesignButton>
+            </Group>
+
+            <Anchor
+              component="button"
+              type="button"
+              onClick={() => setInputMode('docs')}
+              c="var(--nomi-ink-60)"
+              size="xs"
+              style={{ alignSelf: 'flex-start' }}
+            >
+              要加图片 / 视频模型？让 AI 读文档自动配置 →
+            </Anchor>
+          </Stack>
+        )}
+
+        {phase === 'input' && inputMode === 'docs' && (
+          <Stack gap="md">
+            <Anchor
+              component="button"
+              type="button"
+              onClick={() => setInputMode('manual')}
+              c="var(--nomi-ink-60)"
+              size="xs"
+              style={{ alignSelf: 'flex-start' }}
+            >
+              ← 返回手动填写
+            </Anchor>
+            <Text size="xs" c="var(--nomi-ink-60)">
+              适合图片 / 视频等非标准接口：AI 读官方文档，自动抠出参数并配置。需先有一个文本模型来读文档。
+            </Text>
             <Field label="文档地址" hint="粘贴这个模型的官方 API 文档页">
               <DesignTextInput
                 value={docsUrl}

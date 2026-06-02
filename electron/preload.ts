@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
       ipcRenderer.invoke("nomi:agents:chatV2:confirmTool", { sessionId, toolCallId, decision }),
     cancelChatV2: (sessionId: string) =>
       ipcRenderer.invoke("nomi:agents:chatV2:cancel", { sessionId }),
+    clearChatV2Session: (sessionKey: string) =>
+      ipcRenderer.invoke("nomi:agents:chatV2:clearSession", { sessionKey }),
     onChatV2Event: (sessionId: string, callback: (event: unknown) => void) => {
       const listener = (_event: unknown, payload: { sessionId: string; event: unknown }) => {
         if (payload && payload.sessionId === sessionId) callback(payload.event);
@@ -71,6 +73,26 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
       ipcRenderer.invoke("nomi:onboarding:start", payload) as Promise<{ trialId: string }>,
     cancel: (trialId: string) =>
       ipcRenderer.invoke("nomi:onboarding:cancel", { trialId }),
+    manualCommit: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:onboarding:manual-commit", payload) as Promise<{
+        ok: boolean;
+        vendorKey?: string;
+        committed?: Array<{ modelKey: string; displayName: string }>;
+        error?: string;
+      }>,
+    testConnection: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:onboarding:test-connection", payload) as Promise<{
+        ok: boolean;
+        status?: number;
+        error?: string;
+      }>,
+    listModels: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:onboarding:list-models", payload) as Promise<{
+        ok: boolean;
+        models?: string[];
+        status?: number;
+        error?: string;
+      }>,
     onEvent: (trialId: string, callback: (event: unknown) => void) => {
       const listener = (_event: unknown, payload: { trialId: string; event: unknown }) => {
         if (payload && payload.trialId === trialId) callback(payload.event);

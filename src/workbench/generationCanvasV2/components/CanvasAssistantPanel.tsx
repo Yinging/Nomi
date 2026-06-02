@@ -6,6 +6,8 @@ import {
   sendGenerationCanvasAgentMessage,
   type ToolCallEvent,
 } from '../agent/generationCanvasAgentClient'
+import { workbenchSessionKey } from '../../ai/workbenchAgentRunner'
+import { clearWorkbenchAgentSession } from '../../../api/server'
 import { generationCanvasTools } from '../agent/generationCanvasTools'
 import {
   buildStoryboardPlanningMessage,
@@ -195,7 +197,9 @@ export default function CanvasAssistantPanel({
       return { nodeId: node.id }
     }
     if (toolName === 'delete_canvas_nodes') {
-      throw new Error('delete_canvas_nodes is not yet implemented')
+      const nodeIds = Array.isArray(record.nodeIds) ? record.nodeIds.map((id) => String(id || '').trim()).filter(Boolean) : []
+      const deleted = generationCanvasTools.delete_nodes(nodeIds)
+      return { deletedNodeIds: deleted }
     }
     throw new Error(`unknown tool ${toolName}`)
   }, [])
@@ -309,7 +313,10 @@ export default function CanvasAssistantPanel({
   }, [setCollapsed, submitAgentMessage])
 
   const handleNewConversation = React.useCallback(() => {
+    setPendingToolCalls([])
     resetConversation()
+    // Wipe the shared backend memory so both areas start a fresh thread.
+    void clearWorkbenchAgentSession(workbenchSessionKey())
   }, [resetConversation])
 
   if (collapsed) {

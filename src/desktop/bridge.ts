@@ -98,6 +98,7 @@ export type DesktopBridge = {
       decision: { ok: true; result?: unknown } | { ok: false; message?: string },
     ) => Promise<{ ok: boolean; error?: string }>
     cancelChatV2: (sessionId: string) => Promise<{ ok: boolean; error?: string }>
+    clearChatV2Session: (sessionKey: string) => Promise<{ ok: boolean; error?: string }>
     onChatV2Event: (sessionId: string, callback: (event: unknown) => void) => () => void
   }
   onboarding: {
@@ -115,6 +116,41 @@ export type DesktopBridge = {
     }) => Promise<{ trialId: string }>
     cancel: (trialId: string) => Promise<{ ok: boolean; error?: string }>
     onEvent: (trialId: string, callback: (event: unknown) => void) => () => void
+    manualCommit: (payload: {
+      vendorName: string
+      baseUrl: string
+      apiKey: string
+      providerKind?: 'openai-compatible' | 'anthropic'
+      headers?: Record<string, string>
+      models: Array<{ id: string; displayName?: string }>
+    }) => Promise<{
+      ok: boolean
+      vendorKey?: string
+      committed?: Array<{ modelKey: string; displayName: string }>
+      error?: string
+    }>
+    testConnection: (payload: {
+      baseUrl: string
+      apiKey: string
+      modelId?: string
+      providerKind?: 'openai-compatible' | 'anthropic'
+      headers?: Record<string, string>
+    }) => Promise<{
+      ok: boolean
+      status?: number
+      error?: string
+    }>
+    listModels: (payload: {
+      baseUrl: string
+      apiKey: string
+      providerKind?: 'openai-compatible' | 'anthropic'
+      headers?: Record<string, string>
+    }) => Promise<{
+      ok: boolean
+      models?: string[]
+      status?: number
+      error?: string
+    }>
   }
   modelCatalog: {
     listVendors: () => unknown[]

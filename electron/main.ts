@@ -24,6 +24,7 @@ import {
   resolveProjectRelativePath,
   runAgentChat,
   runAgentChatV2,
+  clearAgentChatV2History,
   runTask,
   saveProject,
   showExportInFolder,
@@ -40,6 +41,7 @@ import {
   upsertModelCatalogVendorApiKey,
   clearModelCatalogVendorApiKey,
   commitOnboardedModelToCatalog,
+  commitManualOpenAiCompatibleModels,
   resolveOnboardingAgentFromCatalog,
 } from "./runtime";
 import { runOnboardingTrial } from "./ai/onboarding/agent";
@@ -383,6 +385,13 @@ function registerAgentChatV2Ipc(): void {
     }
     return { ok: true };
   });
+
+  // "新对话" — wipe the shared conversation memory for a sessionKey so the next
+  // turn starts fresh (no key = wipe all).
+  ipcMain.handle("nomi:agents:chatV2:clearSession", async (_event, payload: { sessionKey?: string }) => {
+    clearAgentChatV2History(payload?.sessionKey);
+    return { ok: true };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +434,9 @@ function registerOnboardingIpc(): void {
       baseUrl: String(agentConfig.baseUrl || fromCatalog?.baseUrl || process.env.NOMI_ONBOARDING_AGENT_BASE_URL || ""),
       modelId: String(agentConfig.modelId || fromCatalog?.modelId || process.env.NOMI_ONBOARDING_AGENT_MODEL || ""),
       apiKey: String(agentConfig.apiKey || fromCatalog?.apiKey || process.env.NOMI_ONBOARDING_AGENT_KEY || ""),
+      // Replay the catalog vendor's custom headers so the doc-reader reaches the
+      // same relay/proxy gateway the user's text model is behind.
+      ...(fromCatalog?.extraHeaders ? { extraHeaders: fromCatalog.extraHeaders } : {}),
     };
     if (!agent.baseUrl || !agent.modelId || !agent.apiKey) {
       throw new Error(
@@ -487,6 +499,164 @@ function registerOnboardingIpc(): void {
     session.cancelled = true;
     sendOnboardingEvent(session, { type: "cancelled" });
     return { ok: true };
+  });
+
+  // PRIMARY model-adding path — manual provider entry (BaseURL + key + models).
+  // Deterministic openai-compatible text commit; reuses the single catalog write
+  // path. No forced connectivity test (aligns with opencode; see test-connection).
+  ipcMain.handle("nomi:onboarding:manual-commit", async (_event, payload: Record<string, unknown>) => {
+    try {
+      const providerKind =
+        payload?.providerKind === "anthropic" ? "anthropic" : "openai-compatible";
+      const headers: Record<string, string> = {};
+      if (payload?.headers && typeof payload.headers === "object") {
+        for (const [k, v] of Object.entries(payload.headers as Record<string, unknown>)) {
+          headers[String(k)] = String(v ?? "");
+        }
+      }
+      const result = commitManualOpenAiCompatibleModels({
+        vendorName: String(payload?.vendorName || ""),
+        baseUrl: String(payload?.baseUrl || ""),
+        apiKey: String(payload?.apiKey || ""),
+        providerKind,
+        headers,
+        models: Array.isArray(payload?.models)
+          ? (payload.models as Array<Record<string, unknown>>).map((m) => ({
+              id: String(m?.id || ""),
+              displayName: m?.displayName ? String(m.displayName) : undefined,
+            }))
+          : [],
+      });
+      return { ok: true, vendorKey: result.vendorKey, committed: result.committed };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: message };
+    }
+  });
+
+  // Optional, NON-BLOCKING connectivity probe for the manual form's 测试连接
+  // button. Honest result only — never gates saving. Minimal request body kept
+  // conservative for the widest openai-compatible tolerance.
+  ipcMain.handle("nomi:onboarding:test-connection", async (_event, payload: Record<string, unknown>) => {
+    const providerKind =
+      payload?.providerKind === "anthropic" ? "anthropic" : "openai-compatible";
+    const rawBaseUrl = String(payload?.baseUrl || "").trim().replace(/\/+$/, "");
+    const baseUrl =
+      providerKind === "anthropic" && !rawBaseUrl ? "https://api.anthropic.com" : rawBaseUrl;
+    const apiKey = String(payload?.apiKey || "").trim();
+    const modelId = String(payload?.modelId || "").trim();
+    if (!/^https?:\/\//i.test(baseUrl)) return { ok: false, error: "接入地址需以 http:// 或 https:// 开头" };
+    // User-supplied relay/proxy headers replay on the probe too, so a gateway that
+    // gates on them doesn't report a false failure.
+    const extraHeaders: Record<string, string> = {};
+    if (payload?.headers && typeof payload.headers === "object") {
+      for (const [k, v] of Object.entries(payload.headers as Record<string, unknown>)) {
+        const key = String(k).trim();
+        const value = String(v ?? "").trim();
+        if (key && value) extraHeaders[key] = value;
+      }
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const url =
+        providerKind === "anthropic" ? `${baseUrl}/v1/messages` : `${baseUrl}/chat/completions`;
+      const headers: Record<string, string> =
+        providerKind === "anthropic"
+          ? {
+              "content-type": "application/json",
+              "anthropic-version": "2023-06-01",
+              ...(apiKey ? { "x-api-key": apiKey } : {}),
+              ...extraHeaders,
+            }
+          : {
+              "content-type": "application/json",
+              ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+              ...extraHeaders,
+            };
+      const body =
+        providerKind === "anthropic"
+          ? {
+              model: modelId || "claude-3-5-haiku-latest",
+              max_tokens: 1,
+              messages: [{ role: "user", content: "ping" }],
+            }
+          : {
+              model: modelId || "gpt-3.5-turbo",
+              messages: [{ role: "user", content: "ping" }],
+              max_tokens: 1,
+            };
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (res.ok) return { ok: true, status: res.status };
+      const text = await res.text().catch(() => "");
+      return { ok: false, status: res.status, error: text.slice(0, 300) || `HTTP ${res.status}` };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: message };
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+
+  // Auto-discover the endpoint's models via the standard list-models call, so the
+  // user picks from real model ids instead of guessing/typing. Relays are usually
+  // OpenAI-compatible and expose this; when they don't, the UI falls back to manual
+  // id entry (this just returns ok:false and nothing is blocked).
+  ipcMain.handle("nomi:onboarding:list-models", async (_event, payload: Record<string, unknown>) => {
+    const providerKind =
+      payload?.providerKind === "anthropic" ? "anthropic" : "openai-compatible";
+    const rawBaseUrl = String(payload?.baseUrl || "").trim().replace(/\/+$/, "");
+    const baseUrl =
+      providerKind === "anthropic" && !rawBaseUrl ? "https://api.anthropic.com" : rawBaseUrl;
+    const apiKey = String(payload?.apiKey || "").trim();
+    if (!/^https?:\/\//i.test(baseUrl)) return { ok: false, error: "接入地址需以 http:// 或 https:// 开头" };
+    const extraHeaders: Record<string, string> = {};
+    if (payload?.headers && typeof payload.headers === "object") {
+      for (const [k, v] of Object.entries(payload.headers as Record<string, unknown>)) {
+        const key = String(k).trim();
+        const value = String(v ?? "").trim();
+        if (key && value) extraHeaders[key] = value;
+      }
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
+    try {
+      // openai-compatible baseUrl already ends in /v1 → /models; anthropic baseUrl
+      // is the host root → /v1/models.
+      const url =
+        providerKind === "anthropic" ? `${baseUrl}/v1/models` : `${baseUrl}/models`;
+      const headers: Record<string, string> =
+        providerKind === "anthropic"
+          ? {
+              "anthropic-version": "2023-06-01",
+              ...(apiKey ? { "x-api-key": apiKey } : {}),
+              ...extraHeaders,
+            }
+          : {
+              ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+              ...extraHeaders,
+            };
+      const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        return { ok: false, status: res.status, error: text.slice(0, 300) || `HTTP ${res.status}` };
+      }
+      const json = (await res.json().catch(() => null)) as { data?: Array<{ id?: unknown }> } | null;
+      const models = Array.isArray(json?.data)
+        ? json!.data.map((m) => String(m?.id || "").trim()).filter(Boolean)
+        : [];
+      return { ok: true, models };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: message };
+    } finally {
+      clearTimeout(timeout);
+    }
   });
 }
 

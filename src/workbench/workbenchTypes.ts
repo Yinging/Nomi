@@ -129,16 +129,6 @@ export function normalizeWorkbenchDocument(input: unknown): WorkbenchDocument {
   }
 }
 
-export type CreationDocumentActionType =
-  | 'insert_at_cursor'
-  | 'replace_selection'
-  | 'append_to_end'
-
-export type CreationDocumentAction = {
-  type: CreationDocumentActionType
-  content: string
-}
-
 export type CreationDocumentTools = {
   readFullText: () => string
   readSelectionText: () => string

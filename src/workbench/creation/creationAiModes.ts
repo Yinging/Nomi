@@ -1,4 +1,4 @@
-import type { CreationDocumentAction, CreationDocumentActionType, WorkbenchDocument } from '../workbenchTypes'
+import type { WorkbenchDocument } from '../workbenchTypes'
 
 export type CreationAiModeId =
   | 'general'
@@ -127,124 +127,33 @@ function extractTextFromTiptapNode(node: unknown): string {
   return [ownText, children].filter(Boolean).join(ownText && children ? '\n' : '')
 }
 
-export function appendPlainTextToWorkbenchDocument(document: WorkbenchDocument, text: string): WorkbenchDocument {
-  const normalized = String(text || '').trim()
-  if (!normalized) return document
-  const currentJson = normalizeDocJson(document.contentJson)
-  const appendedNodes = normalized.split(/\n{2,}/).map((block) => ({
-    type: 'paragraph',
-    content: [{ type: 'text', text: block.replace(/\n/g, ' ').trim() }],
-  }))
-  return {
-    ...document,
-    contentJson: {
-      ...currentJson,
-      content: [...currentJson.content, ...appendedNodes],
-    },
-    updatedAt: Date.now(),
-  }
-}
-
-const CREATION_DOCUMENT_ACTION_TYPES: CreationDocumentActionType[] = [
-  'insert_at_cursor',
-  'replace_selection',
-  'append_to_end',
-]
-
-function normalizeActionType(value: unknown): CreationDocumentActionType | null {
-  if (CREATION_DOCUMENT_ACTION_TYPES.includes(value as CreationDocumentActionType)) return value as CreationDocumentActionType
-  if (value === 'insert_cursor') return 'insert_at_cursor'
-  if (value === 'append') return 'append_to_end'
-  if (value === 'replace') return 'replace_selection'
-  return null
-}
-
-function extractJsonCandidate(text: string): string {
-  const trimmed = String(text || '').trim()
-  if (!trimmed) return ''
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fenced?.[1]) return fenced[1].trim()
-  const start = trimmed.indexOf('{')
-  const end = trimmed.lastIndexOf('}')
-  if (start >= 0 && end > start) return trimmed.slice(start, end + 1)
-  return ''
-}
-
-export function parseCreationDocumentAction(reply: string): CreationDocumentAction | null {
-  const jsonCandidate = extractJsonCandidate(reply)
-  if (!jsonCandidate) return null
-  try {
-    const parsed = JSON.parse(jsonCandidate) as Record<string, unknown>
-    const type = normalizeActionType(parsed.type)
-    const content = typeof parsed.content === 'string' ? parsed.content.trim() : ''
-    if (!type || !content) return null
-    return { type, content }
-  } catch {
-    return null
-  }
-}
-
-export function createFallbackCreationDocumentAction(reply: string): CreationDocumentAction | null {
-  const content = String(reply || '').trim()
-  if (!content || content === '处理中...' || content.startsWith('（错误）')) return null
-  return { type: 'append_to_end', content }
-}
-
-export function getCreationDocumentActionLabel(type: CreationDocumentActionType): string {
-  if (type === 'insert_at_cursor') return '插入到光标'
-  if (type === 'replace_selection') return '替换选区'
-  return '追加到文末'
-}
-
-function normalizeDocJson(value: unknown): { type: 'doc'; content: unknown[] } {
-  if (!value || typeof value !== 'object') return { type: 'doc', content: [] }
-  const record = value as { type?: unknown; content?: unknown }
-  return {
-    type: 'doc',
-    content: Array.isArray(record.content) ? record.content : [],
-  }
-}
-
 export function buildCreationAiPrompt(input: {
   mode: CreationAiMode
   userRequest: string
-  documentText: string
-  selectedText: string
 }): string {
   const request = input.userRequest.trim()
-  const selectedText = input.selectedText.trim()
-  const documentText = input.documentText.trim()
-  // 通用问答：纯聊天，不注入写文档协议，文稿/选区仅作参考上下文。
+  // 通用问答：纯聊天，不写文档；文稿/选区如有需要由模型用 read_* 工具自取。
   if (input.mode.chatOnly) {
     return [
       input.mode.prompt,
       '',
-      selectedText ? `用户当前选中的文字（仅供参考）：\n${selectedText}` : '',
-      documentText ? `用户当前文稿（仅供参考，未必相关）：\n${documentText}` : '',
+      '需要时可调用 read_full_text 读取当前文稿、read_selection 读取选区作为上下文；本模式不要改写文档。',
       '',
       '用户问题：',
       request || '（用户未输入文字，请礼貌询问需要什么帮助）',
-    ].filter(Boolean).join('\n')
+    ].join('\n')
   }
   return [
     input.mode.prompt,
     '',
-    'documentTools 协议：',
-    '- 可用工具：read_full_text、read_selection、insert_at_cursor、replace_selection、append_to_end、write_document、generate_storyboard_node、generate_asset_node。',
-    '- 默认不要直接改文档；如需写入，返回 action，由用户点击应用后前端再写入。',
-    '- 如果用户明确要求写入文档、插入、替换或追加，必须返回对应 action；前端不会基于用户原文猜测写入位置。',
-    '- 如果需要改文档，只输出一个 JSON 对象：{"type":"insert_at_cursor|replace_selection|append_to_end","content":"..."}。',
-    '- 有明确选区且任务是改写/润色时优先使用 replace_selection；要求续写或补充时使用 insert_at_cursor；整理完整结果时使用 append_to_end。',
-    '- 不要输出模型内部推理链路。',
+    '工具使用规则（真实工具调用，用户会在卡片上确认每一次写入）：',
+    '- 读取上下文：需要现有正文时调用 read_full_text；只针对选中片段操作时调用 read_selection。不要假设你已经知道文稿内容，先读再写。',
+    '- 写入文档：改写/润色选中片段用 replace_selection；在光标处续写或补充用 insert_at_cursor；交付完整结果追加到文末用 append_to_end。',
+    '- 写入工具的 content 字段只放最终正文，不要写使用说明或解释。',
+    '- 只有用户明确要求写入/插入/替换/追加时才调用写入工具；否则用自然语言回答即可。',
+    '- 语言与用户保持一致；不要输出内部推理链路。',
     '',
     '当前任务：',
     request || `请按“${input.mode.label}”模式处理当前材料。`,
-    '',
-    selectedText ? `当前选区：\n${selectedText}` : '当前选区：无',
-    '',
-    documentText ? `当前创作文稿：\n${documentText}` : '当前创作文稿：空',
-    '',
-    '输出要求：',
-    '内容必须具体可用于视频创作；如果返回 JSON，content 内只放最终正文，不写使用说明。',
   ].join('\n')
 }
