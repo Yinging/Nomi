@@ -86,6 +86,13 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
         status?: number;
         error?: string;
       }>,
+    listModels: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:onboarding:list-models", payload) as Promise<{
+        ok: boolean;
+        models?: string[];
+        status?: number;
+        error?: string;
+      }>,
     onEvent: (trialId: string, callback: (event: unknown) => void) => {
       const listener = (_event: unknown, payload: { trialId: string; event: unknown }) => {
         if (payload && payload.trialId === trialId) callback(payload.event);

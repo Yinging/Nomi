@@ -140,6 +140,17 @@ export type DesktopBridge = {
       status?: number
       error?: string
     }>
+    listModels: (payload: {
+      baseUrl: string
+      apiKey: string
+      providerKind?: 'openai-compatible' | 'anthropic'
+      headers?: Record<string, string>
+    }) => Promise<{
+      ok: boolean
+      models?: string[]
+      status?: number
+      error?: string
+    }>
   }
   modelCatalog: {
     listVendors: () => unknown[]

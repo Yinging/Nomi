@@ -602,6 +602,62 @@ function registerOnboardingIpc(): void {
       clearTimeout(timeout);
     }
   });
+
+  // Auto-discover the endpoint's models via the standard list-models call, so the
+  // user picks from real model ids instead of guessing/typing. Relays are usually
+  // OpenAI-compatible and expose this; when they don't, the UI falls back to manual
+  // id entry (this just returns ok:false and nothing is blocked).
+  ipcMain.handle("nomi:onboarding:list-models", async (_event, payload: Record<string, unknown>) => {
+    const providerKind =
+      payload?.providerKind === "anthropic" ? "anthropic" : "openai-compatible";
+    const rawBaseUrl = String(payload?.baseUrl || "").trim().replace(/\/+$/, "");
+    const baseUrl =
+      providerKind === "anthropic" && !rawBaseUrl ? "https://api.anthropic.com" : rawBaseUrl;
+    const apiKey = String(payload?.apiKey || "").trim();
+    if (!/^https?:\/\//i.test(baseUrl)) return { ok: false, error: "接入地址需以 http:// 或 https:// 开头" };
+    const extraHeaders: Record<string, string> = {};
+    if (payload?.headers && typeof payload.headers === "object") {
+      for (const [k, v] of Object.entries(payload.headers as Record<string, unknown>)) {
+        const key = String(k).trim();
+        const value = String(v ?? "").trim();
+        if (key && value) extraHeaders[key] = value;
+      }
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
+    try {
+      // openai-compatible baseUrl already ends in /v1 → /models; anthropic baseUrl
+      // is the host root → /v1/models.
+      const url =
+        providerKind === "anthropic" ? `${baseUrl}/v1/models` : `${baseUrl}/models`;
+      const headers: Record<string, string> =
+        providerKind === "anthropic"
+          ? {
+              "anthropic-version": "2023-06-01",
+              ...(apiKey ? { "x-api-key": apiKey } : {}),
+              ...extraHeaders,
+            }
+          : {
+              ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+              ...extraHeaders,
+            };
+      const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        return { ok: false, status: res.status, error: text.slice(0, 300) || `HTTP ${res.status}` };
+      }
+      const json = (await res.json().catch(() => null)) as { data?: Array<{ id?: unknown }> } | null;
+      const models = Array.isArray(json?.data)
+        ? json!.data.map((m) => String(m?.id || "").trim()).filter(Boolean)
+        : [];
+      return { ok: true, models };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: message };
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
 }
 
 function registerLocalProtocol(): void {
