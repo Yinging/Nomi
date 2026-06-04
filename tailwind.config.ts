@@ -105,6 +105,7 @@ export default {
         'tc-6': 'var(--tc-space-6)',
       },
       fontSize: {
+        micro: 'var(--tc-font-size-micro)',
         body: 'var(--tc-font-size-body)',
         'body-sm': 'var(--tc-font-size-body-sm)',
         caption: 'var(--tc-font-size-caption)',
