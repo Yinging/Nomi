@@ -33,7 +33,8 @@
     "lab:onboard": "tsx scripts/lab-onboard.ts",
     "dist": "electron-builder",
     "dist:mac:dir": "electron-builder --mac dir --arm64",
-    "postinstall": "node ./scripts/install-git-hooks.cjs"
+    "postinstall": "node ./scripts/install-git-hooks.cjs",
+    "test:e2e": "node tests/ux/smoke.e2e.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
