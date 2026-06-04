@@ -25,6 +25,7 @@
     "check:filesize": "node ./scripts/check-file-sizes.mjs",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p electron/tsconfig.json",
     "lint": "eslint .",
+    "lint:ci": "eslint . --max-warnings=98",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
