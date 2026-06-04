@@ -84,8 +84,10 @@ runtime.ts 最终退化为薄装配/re-export 层，main.ts 的 import 列表自
 | 4 | catalog/secrets（ApiKeyRecord + safeStorage 加密/解密） | ✅ | 见下 | 2984 → 2933 |
 
 | 5 | runtimePaths（基础设施地基：路径/目录/JSON 读 + getWorkspaceRepositoryDeps；并消除 writeJson 并行实现，改用 jsonFile.writeJsonFileAtomic） | ✅ | 见下 | 2933 → 2891 |
-| 6 | projects → 接下来（依赖 runtimePaths，已解开循环） | — | — | — |
+| 6 | projects/repository（项目存储 CRUD + ProjectRecord；删死代码 uniqueDir/toSummary；公共 API 从 runtime re-export 保持 main.ts 不变） | ✅ | 见下 | 2891 → 2737 |
+| 7 | assets/repository（资产写盘/导入/列表，有 runtime.assets 测试网）→ 接下来 | — | — | — |
 
-**进度：runtime.ts 3150 → 2891（-259 行）。** 第 5 步是关键的"基础设施层"——projects/assets/catalog
-都依赖它，先抽它才能解开这些域之间的循环依赖；同时顺手消除了 writeJson 与 jsonFile 的并行实现（规则 1）。
-用户指示"先切完再做用户有感的事"，继续按依赖序往上抽（projects → assets → catalog → tasks → export → agent）。
+**进度：runtime.ts 3150 → 2737（-413 行，-13%）。** 第 5 步"基础设施层"解开了循环依赖，第 6 步 projects
+顺势抽出（依赖 runtimePaths/workspace，不反向依赖 runtime）。projects 公共 API（main.ts 消费的 6 个）
+从 runtime re-export，main.ts 零改动；现有 runtime.workspace-projects 测试经 re-export 仍覆盖（安全网）。
+继续按依赖序：assets → catalog → tasks → export → agent。

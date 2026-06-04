@@ -84,21 +84,19 @@ import {
   readJson,
   readText,
 } from "./runtimePaths";
-
-type ProjectRecord = {
-  id: string;
-  name: string;
-  createdAt: number;
-  updatedAt: number;
-  revision?: number;
-  savedAt?: number;
-  thumbnail?: string;
-  thumbnailUrls?: string[];
-  version: number;
-  payload?: unknown;
-  rootPath?: string;
-  missing?: boolean;
-};
+import {
+  createProject,
+  deleteProject,
+  ensureProjectFolders,
+  listProjects,
+  projectDirById,
+  readProject,
+  resolveProjectRelativePath,
+  sanitizeName,
+  saveProject,
+} from "./projects/repository";
+// 公共 API：main.ts 仍从 "./runtime" 消费这些 —— re-export 保持其 import 不变。
+export { createProject, deleteProject, listProjects, readProject, resolveProjectRelativePath, saveProject };
 
 type BillingModelKind = "text" | "image" | "video" | "audio";
 type ProfileKind =
@@ -442,158 +440,6 @@ function buildSkillSystemPrompt(payload: JsonRecord): string {
   ].join("\n");
 }
 
-
-function sanitizeName(value: unknown, fallback = "Untitled"): string {
-  const text = String(value || "").trim() || fallback;
-  return text
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
-    .replace(/\s+/g, " ")
-    .slice(0, 90)
-    .trim() || fallback;
-}
-
-function uniqueDir(parent: string, preferredName: string): string {
-  const base = sanitizeName(preferredName);
-  let candidate = path.join(parent, base);
-  if (!fs.existsSync(candidate)) return candidate;
-  for (let index = 2; index < 1000; index += 1) {
-    candidate = path.join(parent, `${base} ${index}`);
-    if (!fs.existsSync(candidate)) return candidate;
-  }
-  return path.join(parent, `${base} ${crypto.randomUUID().slice(0, 8)}`);
-}
-
-function normalizeProjectRecord(input: unknown): ProjectRecord {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error("Project record must be an object");
-  }
-  const raw = input as JsonRecord;
-  const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `project-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-  const time = Date.now();
-  return {
-    ...(raw as ProjectRecord),
-    id,
-    name: sanitizeName(raw.name, "Untitled Project"),
-    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : time,
-    updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : time,
-    revision: typeof raw.revision === "number" ? raw.revision : 0,
-    savedAt: typeof raw.savedAt === "number" ? raw.savedAt : time,
-    version: typeof raw.version === "number" ? raw.version : 1,
-  };
-}
-
-function legacyProjectDirById(projectId: string): string | null {
-  const root = getProjectsRoot();
-  ensureDir(root);
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const projectFile = path.join(root, entry.name, PROJECT_FILE);
-    const projectDir = path.join(root, entry.name);
-    if (isLegacyProjectSuppressed(projectDir)) continue;
-    if (!fs.existsSync(projectFile)) continue;
-    const record = readJson<ProjectRecord | null>(projectFile, null);
-    if (record?.id === projectId) return projectDir;
-  }
-  return null;
-}
-
-function projectDirById(projectId: string): string | null {
-  return resolveWorkspaceProjectDir(projectId, getWorkspaceRepositoryDeps()) || legacyProjectDirById(projectId);
-}
-
-function ensureProjectFolders(projectDir: string): void {
-  ensureDir(projectDir);
-  ensureDir(path.join(projectDir, "assets"));
-  ensureExportDirs(projectDir);
-}
-
-function toSummary(record: ProjectRecord): Omit<ProjectRecord, "payload"> {
-  const { payload: _payload, ...summary } = record;
-  return summary;
-}
-
-function getInputRootPath(input: unknown): string | null {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
-  const rootPath = (input as JsonRecord).rootPath;
-  return typeof rootPath === "string" && rootPath.trim() ? rootPath.trim() : null;
-}
-
-export function listProjects(): Array<Omit<ProjectRecord, "payload">> {
-  const deps = getWorkspaceRepositoryDeps();
-  for (const legacyProject of discoverLegacyProjects(deps.defaultProjectsRoot)) {
-    rememberWorkspace(deps.settingsRoot, legacyProject);
-  }
-  return listWorkspaceProjects(deps).sort((a, b) => b.updatedAt - a.updatedAt);
-}
-
-export function createProject(input: unknown): ProjectRecord {
-  const rootPath = getInputRootPath(input);
-  if (rootPath) {
-    return createWorkspaceProject({ rootPath, record: input }, getWorkspaceRepositoryDeps());
-  }
-
-  throw new Error("rootPath is required to create a desktop workspace project");
-}
-
-export function readProject(projectId: string): ProjectRecord | null {
-  const id = String(projectId || "").trim();
-  const workspaceRecord = readWorkspaceProject(id, getWorkspaceRepositoryDeps());
-  if (workspaceRecord) return workspaceRecord;
-
-  const projectDir = legacyProjectDirById(id);
-  if (!projectDir) return null;
-  return normalizeProjectRecord(readJson<ProjectRecord>(path.join(projectDir, PROJECT_FILE), {} as ProjectRecord));
-}
-
-export function saveProject(projectId: string, input: unknown): ProjectRecord {
-  const id = String(projectId || "").trim();
-  if (readWorkspaceProject(id, getWorkspaceRepositoryDeps())) {
-    return saveWorkspaceProject(id, input, getWorkspaceRepositoryDeps());
-  }
-
-  const projectDir = legacyProjectDirById(id);
-  if (!projectDir) throw new Error("Cannot save unknown workspace project");
-  const record = normalizeProjectRecord({ ...(input as JsonRecord), id });
-  ensureProjectFolders(projectDir);
-  writeJsonFileAtomic(path.join(projectDir, PROJECT_FILE), record);
-  return record;
-}
-
-export function deleteProject(projectId: string): { id: string; deleted: boolean } {
-  const id = String(projectId || "").trim();
-  if (!id) throw new Error("projectId is required");
-  if (readWorkspaceProject(id, getWorkspaceRepositoryDeps())) {
-    const workspaceDir = resolveWorkspaceProjectDir(id, getWorkspaceRepositoryDeps());
-    const result = removeWorkspaceProjectReference(id, getWorkspaceRepositoryDeps());
-    if (workspaceDir && fs.existsSync(path.join(workspaceDir, PROJECT_FILE))) {
-      suppressLegacyProjectRediscovery(workspaceDir);
-    }
-    return result;
-  }
-
-  const projectDir = legacyProjectDirById(id);
-  if (!projectDir) return { id, deleted: false };
-  if (fs.existsSync(path.join(projectDir, ".nomi", PROJECT_FILE))) {
-    suppressLegacyProjectRediscovery(projectDir);
-    return { id, deleted: false };
-  }
-  const root = path.resolve(getProjectsRoot());
-  const resolvedProjectDir = path.resolve(projectDir);
-  const rootWithSep = `${root}${path.sep}`;
-  if (resolvedProjectDir === root || !resolvedProjectDir.startsWith(rootWithSep)) {
-    throw new Error("Refusing to delete a path outside the projects root");
-  }
-  fs.rmSync(resolvedProjectDir, { recursive: true, force: true });
-  return { id, deleted: true };
-}
-
-export function resolveProjectRelativePath(projectId: string, relativePath: string): string {
-  const projectDir = projectDirById(String(projectId || "").trim());
-  if (!projectDir) throw new Error("Project not found");
-  const value = String(relativePath || "");
-  if (!value.trim()) return path.resolve(projectDir);
-  return resolveWorkspaceRelativePath(projectDir, value);
-}
 
 function bufferFromExportBytes(input: TimelineMp4ExportRequest["webmBytes"]): Buffer {
   if (input instanceof ArrayBuffer) return Buffer.from(input);
