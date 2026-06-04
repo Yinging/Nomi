@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { readJsonFile, writeJsonFileAtomic } from "../jsonFile";
 import {
   workspaceAssetsGeneratedDir,
   workspaceAssetsImportedDir,
@@ -9,15 +10,6 @@ import {
   workspaceProjectFile,
 } from "./workspacePaths";
 import { normalizeWorkspaceProjectRecord, type WorkspaceProjectRecordV2 } from "./workspaceTypes";
-
-function readJsonFile(filePath: string): unknown {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
-}
-
-function writeJsonFile(filePath: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
 
 function workspaceId(): string {
   return `workspace-${crypto.randomUUID()}`;
@@ -37,7 +29,7 @@ export function readWorkspaceManifest(rootPath: string): WorkspaceProjectRecordV
 
 export function writeWorkspaceManifest(rootPath: string, record: WorkspaceProjectRecordV2): WorkspaceProjectRecordV2 {
   const normalized = normalizeWorkspaceProjectRecord(record);
-  writeJsonFile(workspaceProjectFile(rootPath), normalized);
+  writeJsonFileAtomic(workspaceProjectFile(rootPath), normalized);
   return normalized;
 }
 
