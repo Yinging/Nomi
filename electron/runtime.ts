@@ -101,8 +101,8 @@ import {
 // 公共 API：main.ts 仍从 "./runtime" 消费这些 —— re-export 保持其 import 不变。
 export { createProject, deleteProject, listProjects, readProject, resolveProjectRelativePath, saveProject };
 
-type BillingModelKind = "text" | "image" | "video" | "audio";
-type ProfileKind =
+export type BillingModelKind = "text" | "image" | "video" | "audio";
+export type ProfileKind =
   | "chat"
   | "prompt_refine"
   | "text_to_image"
@@ -115,7 +115,7 @@ type ProfileKind =
 
 type AiSdkProviderKind = "openai-compatible" | "anthropic";
 
-type Vendor = {
+export type Vendor = {
   key: string;
   name: string;
   enabled: boolean;
@@ -135,7 +135,7 @@ type Vendor = {
   updatedAt: string;
 };
 
-type Model = {
+export type Model = {
   modelKey: string;
   vendorKey: string;
   modelAlias?: string | null;
@@ -184,7 +184,7 @@ type Model = {
  * `response_mapping` / `provider_meta_mapping` describe how to read the
  * upstream response (used by `buildProfileTaskResult`).
  */
-type HttpOperation = {
+export type HttpOperation = {
   method: string;
   path: string;
   headers?: Record<string, string>;
@@ -200,7 +200,7 @@ type HttpOperation = {
  * Vendors that map their status strings to ours can use `statusMapping`
  * (e.g. `{ succeeded: ["completed", "done"] }`).
  */
-type Mapping = {
+export type Mapping = {
   id: string;
   vendorKey: string;
   taskKind: ProfileKind;
@@ -223,7 +223,7 @@ type Mapping = {
 type CatalogVersion = 1 | 2 | 3;
 const CURRENT_CATALOG_VERSION: CatalogVersion = 3;
 
-type CatalogState = {
+export type CatalogState = {
   version: CatalogVersion;
   vendors: Vendor[];
   models: Model[];

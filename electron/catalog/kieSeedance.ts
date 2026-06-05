@@ -14,6 +14,8 @@
 // 本轮（C1）只覆盖 Seedance「首帧」(image_to_video) 这一条，验证传输打通；
 // 首尾帧 / 全能参考 / HappyHorse 在后续 chunk 增量加。
 
+import type { HttpOperation, ProfileKind } from "../runtime";
+
 /** kie.ai 供应商种子（裸 baseUrl + bearer）。 */
 export const KIE_VENDOR_SEED = {
   key: "kie",
@@ -35,7 +37,7 @@ export const SEEDANCE_2_MODEL_SEED = {
  * body 是 kie 的 `{ model, input: {...} }` 嵌套形状；模板引擎对「整串就是一个 {{}}」
  * 的值做原样透传（数组/对象不被 stringify），见 requestPipeline.renderTemplateValue。
  */
-export const SEEDANCE_2_CREATE_OP = {
+export const SEEDANCE_2_CREATE_OP: HttpOperation = {
   method: "POST",
   path: "/api/v1/jobs/createTask",
   headers: {
@@ -52,14 +54,14 @@ export const SEEDANCE_2_CREATE_OP = {
       duration: "{{request.params.duration}}",
     },
   },
-} as const;
+};
 
 /**
  * 轮询操作。沿用已端到端验证过的 kie job 端点 `/api/v1/jobs/recordInfo`
  * （Kling 3.0 试装即用此端点；docs 另写的 /market/common/get-task-detail 未经我们实测，
  * 故先用 recordInfo，待一次真实生成核对后再决定是否切换）。
  */
-export const SEEDANCE_2_QUERY_OP = {
+export const SEEDANCE_2_QUERY_OP: HttpOperation = {
   method: "GET",
   path: "/api/v1/jobs/recordInfo",
   headers: { Authorization: "Bearer {{user_api_key}}" },
@@ -70,13 +72,13 @@ export const SEEDANCE_2_QUERY_OP = {
     video_url: "data.resultJson.resultUrls.0",
     error_message: "data.failMsg",
   },
-} as const;
+};
 
 /** (kie, image_to_video) 的完整 mapping 种子。 */
 export const SEEDANCE_2_IMAGE_TO_VIDEO_MAPPING = {
   vendorKey: "kie",
-  taskKind: "image_to_video" as const,
+  taskKind: "image_to_video" as ProfileKind,
   name: "Seedance 2.0 · 首帧",
   create: SEEDANCE_2_CREATE_OP,
   query: SEEDANCE_2_QUERY_OP,
-} as const;
+};
