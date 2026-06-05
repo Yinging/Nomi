@@ -7,7 +7,7 @@
 //   - 反复调用安全（runtime 在 catalog 载入后调用一次，changed 才落盘）。
 // type-only 复用 runtime 的领域类型，避免第二份定义漂移（评审 P0-3/M1）。
 
-import type { CatalogState, Mapping, Model, Vendor } from "../runtime";
+import type { CatalogState, Mapping, Model, Vendor } from "./types";
 import {
   KIE_VENDOR_SEED,
   SEEDANCE_2_CREATE_OP,

@@ -14,7 +14,7 @@
 // 本轮（C1）只覆盖 Seedance「首帧」(image_to_video) 这一条，验证传输打通；
 // 首尾帧 / 全能参考 / HappyHorse 在后续 chunk 增量加。
 
-import type { HttpOperation, ProfileKind } from "../runtime";
+import type { HttpOperation, ProfileKind } from "./types";
 
 /** kie.ai 供应商种子（裸 baseUrl + bearer）。 */
 export const KIE_VENDOR_SEED = {

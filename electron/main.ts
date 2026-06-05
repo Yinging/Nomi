@@ -43,6 +43,7 @@ import {
   commitOnboardedModelToCatalog,
   commitManualOpenAiCompatibleModels,
   resolveOnboardingAgentFromCatalog,
+  ensureBuiltinModelSeeds,
 } from "./runtime";
 import { runOnboardingTrial } from "./ai/onboarding/agent";
 import type { ProviderKind, ModelKind } from "./ai/onboarding/types";
@@ -695,6 +696,12 @@ function registerLocalProtocol(): void {
 
 app.whenReady().then(async () => {
   registerLocalProtocol();
+  // 写入内置模型种子（Seedance 等主流模型档案）；幂等、存在即跳过，不覆盖用户已有记录。
+  try {
+    ensureBuiltinModelSeeds();
+  } catch (error) {
+    console.error("[nomi:desktop] ensureBuiltinModelSeeds failed:", error);
+  }
   registerIpc();
   await createWindow();
 

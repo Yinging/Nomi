@@ -18,7 +18,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   commitManualOpenAiCompatibleModels,
   deriveVendorKeyFromBaseUrl,
+  ensureBuiltinModelSeeds,
   extractVendorExtraHeaders,
+  listModelCatalogMappings,
   listModelCatalogModels,
   listModelCatalogVendors,
   resolveOnboardingAgentFromCatalog,
@@ -54,6 +56,29 @@ afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+describe("ensureBuiltinModelSeeds — 内置模型种子（启动时调一次）", () => {
+  it("写入 kie vendor + Seedance 模型(meta.archetypeId) + 首帧 mapping，且幂等不重复", () => {
+    // 干净安装：seed 前目录为空（readCatalog 不自动 seed，避免污染）
+    expect(listModelCatalogVendors()).toHaveLength(0);
+    expect(listModelCatalogModels()).toHaveLength(0);
+
+    ensureBuiltinModelSeeds();
+
+    expect(listModelCatalogVendors().map((v) => v.key)).toContain("kie");
+    const seedance = listModelCatalogModels().find((m) => m.modelKey === "bytedance/seedance-2");
+    expect(seedance).toMatchObject({ vendorKey: "kie", kind: "video", enabled: true });
+    expect((seedance?.meta as { archetypeId?: string } | undefined)?.archetypeId).toBe("seedance-2");
+    expect(
+      listModelCatalogMappings().some((mp) => mp.vendorKey === "kie" && mp.taskKind === "image_to_video"),
+    ).toBe(true);
+
+    // 幂等：再调一次不重复
+    ensureBuiltinModelSeeds();
+    expect(listModelCatalogVendors().filter((v) => v.key === "kie")).toHaveLength(1);
+    expect(listModelCatalogModels().filter((m) => m.modelKey === "bytedance/seedance-2")).toHaveLength(1);
+  });
 });
 
 describe("manual model entry — user journey", () => {

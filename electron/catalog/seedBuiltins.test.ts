@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { CatalogState } from "../runtime";
+import type { CatalogState } from "./types";
 import { applyBuiltinSeeds } from "./seedBuiltins";
 
 function emptyCatalog(): CatalogState {

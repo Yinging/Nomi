@@ -101,135 +101,32 @@ import {
 // 公共 API：main.ts 仍从 "./runtime" 消费这些 —— re-export 保持其 import 不变。
 export { createProject, deleteProject, listProjects, readProject, resolveProjectRelativePath, saveProject };
 
-export type BillingModelKind = "text" | "image" | "video" | "audio";
-export type ProfileKind =
-  | "chat"
-  | "prompt_refine"
-  | "text_to_image"
-  | "image_to_prompt"
-  | "image_to_video"
-  | "text_to_video"
-  | "image_edit"
-  | "text_to_audio"
-  | "image_to_audio";
-
-type AiSdkProviderKind = "openai-compatible" | "anthropic";
-
-export type Vendor = {
-  key: string;
-  name: string;
-  enabled: boolean;
-  hasApiKey?: boolean;
-  baseUrlHint?: string | null;
-  authType?: "none" | "bearer" | "x-api-key" | "query";
-  authHeader?: string | null;
-  authQueryParam?: string | null;
-  /**
-   * Which Vercel AI SDK provider implementation to use for this vendor.
-   * Optional; absent / unknown values fall back to "openai-compatible"
-   * so existing model-catalog.json files keep working without migration.
-   */
-  providerKind?: AiSdkProviderKind;
-  meta?: unknown;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type Model = {
-  modelKey: string;
-  vendorKey: string;
-  modelAlias?: string | null;
-  labelZh: string;
-  kind: BillingModelKind;
-  enabled: boolean;
-  meta?: unknown;
-  pricing?: {
-    cost: number;
-    enabled: boolean;
-    createdAt?: string;
-    updatedAt?: string;
-    specCosts: Array<{ specKey: string; cost: number; enabled: boolean; createdAt?: string; updatedAt?: string }>;
-  };
-  /**
-   * Catalog v2+: present when this model was produced by the onboarding agent.
-   * Carries the doc-quote evidence per parameter so we can audit / re-trial later.
-   */
-  onboarding?: {
-    addedVia: "agent" | "manual";
-    trialId?: string;
-    docsUrl?: string;
-    addedAt: string;
-    fields: Array<{
-      key: string;
-      displayName: string;
-      type: "select" | "number" | "text" | "boolean" | "image-url";
-      options?: Array<{ value: string; label: string }>;
-      default?: string;
-      evidence: {
-        field: string;
-        evidence: string;
-        evidence_location: string;
-        confidence: "high" | "medium" | "low";
-      };
-    }>;
-  };
-  createdAt: string;
-  updatedAt: string;
-};
-
-/**
- * A single HTTP call template: method + path (relative to vendor.baseUrl, or
- * absolute), headers, query, body. String values may contain `{{...}}`
- * placeholders resolved by `renderTemplateValue` against the request context.
- * `response_mapping` / `provider_meta_mapping` describe how to read the
- * upstream response (used by `buildProfileTaskResult`).
- */
-export type HttpOperation = {
-  method: string;
-  path: string;
-  headers?: Record<string, string>;
-  query?: Record<string, unknown>;
-  body?: unknown;
-  response_mapping?: Record<string, unknown>;
-  provider_meta_mapping?: Record<string, unknown>;
-};
-
-/**
- * One (vendor, taskKind) → one mapping row. `create` is the synchronous POST
- * (or whatever initiates the task). `query` is the poll for async APIs.
- * Vendors that map their status strings to ours can use `statusMapping`
- * (e.g. `{ succeeded: ["completed", "done"] }`).
- */
-export type Mapping = {
-  id: string;
-  vendorKey: string;
-  taskKind: ProfileKind;
-  name: string;
-  enabled: boolean;
-  create: HttpOperation;
-  query?: HttpOperation;
-  statusMapping?: Record<string, string[]>;
-  createdAt: string;
-  updatedAt: string;
-};
-
-/** Catalog version.
- *  v2 added Model.onboarding + ApiKeyRecord.enc.
- *  v3 collapsed Mapping.{requestMapping,responseMapping} (which used to wrap
- *  things in a v2 envelope `{version, create:{default}, query:{default}}`) into
- *  flat Mapping.{create,query} HttpOperation fields. Old rows are normalized
- *  in `migrateCatalogForward`.
- */
-type CatalogVersion = 1 | 2 | 3;
-const CURRENT_CATALOG_VERSION: CatalogVersion = 3;
-
-export type CatalogState = {
-  version: CatalogVersion;
-  vendors: Vendor[];
-  models: Model[];
-  mappings: Mapping[];
-  apiKeysByVendor: Record<string, ApiKeyRecord>;
-};
+// Catalog 领域类型已抽到 ./catalog/types（单一真相源，评审 CTO/M1 + P0-3）。
+// 本文件 import 供内部使用，并 re-export 让外部 "./runtime" 消费方 import 不变。
+import type {
+  AiSdkProviderKind,
+  BillingModelKind,
+  CatalogState,
+  CatalogVersion,
+  HttpOperation,
+  Mapping,
+  Model,
+  ProfileKind,
+  Vendor,
+} from "./catalog/types";
+import { CURRENT_CATALOG_VERSION } from "./catalog/types";
+import { applyBuiltinSeeds } from "./catalog/seedBuiltins";
+export type {
+  AiSdkProviderKind,
+  BillingModelKind,
+  CatalogState,
+  CatalogVersion,
+  HttpOperation,
+  Mapping,
+  Model,
+  ProfileKind,
+  Vendor,
+} from "./catalog/types";
 
 type TaskRequest = {
   kind: ProfileKind;
@@ -870,6 +767,18 @@ function readCatalog(): CatalogState {
     })),
     apiKeysByVendor,
   };
+}
+
+/**
+ * 应用内置模型种子（内置档案：Seedance 等主流模型）。**app 启动时调一次**——
+ * 不放进 readCatalog（那会在每次读取/测试里都触发，污染测试且多余）。幂等、存在即跳过，
+ * 写盘只在新建或种子有变化时发生。
+ */
+export function ensureBuiltinModelSeeds(): void {
+  const current = readJson<CatalogState | null>(catalogPath(), null);
+  const base = current ? migrateCatalogForward(current) : defaultCatalog();
+  const { state, changed } = applyBuiltinSeeds(base, new Date().toISOString());
+  if (!current || changed) writeCatalog(state);
 }
 
 /**
