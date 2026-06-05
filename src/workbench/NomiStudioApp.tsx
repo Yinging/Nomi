@@ -21,10 +21,7 @@ import { setDesktopActiveProjectId } from "../desktop/activeProject";
 import { getDesktopBridge } from "../desktop/bridge";
 import { listWorkbenchModelCatalogModels } from "./api/modelCatalogApi";
 import { buildStudioUrl } from "../utils/appRoutes";
-import {
-    openWorkspaceFromLibrary,
-    openWorkspaceProjectFromPicker,
-} from "./library/openWorkspaceFlow";
+import { openWorkspaceFromLibrary } from "./library/openWorkspaceFlow";
 
 type AppView = "library" | "studio";
 type ProjectPersistenceModule = typeof import("./project/projectPersistenceService");
@@ -184,15 +181,19 @@ export default function NomiStudioApp(): JSX.Element {
         });
     }, [hydrateProject, refreshProjects]);
 
-    const newProject = React.useCallback(async () => {
-        const desktop = getDesktopBridge();
-        if (desktop?.workspace) {
-            await openWorkspaceFolder();
-            return;
+    const newProject = React.useCallback(() => {
+        // 「新建项目」：直接在默认位置建项目，不弹文件夹选择器。
+        // 桌面端 createLocalProject 经 IPC 落到 ~/Documents/Nomi Projects 的自动文件夹，
+        // Web 端落 localStorage。要绑定自选目录走「打开文件夹」。
+        try {
+            const project = createLocalProject();
+            refreshProjects();
+            void hydrateProject(project.id);
+        } catch (error) {
+            console.error("new project error", error);
+            toast("新建项目失败，请检查本地磁盘权限", "error");
         }
-        const project = createLocalProject();
-        void hydrateProject(project.id);
-    }, [hydrateProject, openWorkspaceFolder]);
+    }, [hydrateProject, refreshProjects]);
 
     /**
      * Try-Now hero handler (C6). Creates a fresh project, hydrates it,
@@ -219,24 +220,18 @@ export default function NomiStudioApp(): JSX.Element {
                 );
                 return;
             }
-            const desktop = getDesktopBridge();
+            // 示例同样不强迫选文件夹：直接在默认位置建项目（桌面端落
+            // ~/Documents/Nomi Projects，Web 端落 localStorage），让「30 秒体验」
+            // 真的一键就跑。要自定义目录用户可后续走「打开文件夹」。
             let projectId: string | null = null;
-            if (desktop?.workspace) {
-                projectId = await openWorkspaceProjectFromPicker({
-                    bridge: desktop,
-                    name: example.projectName,
-                    confirmInitialize: async (rootPath) =>
-                        window.confirm(
-                            `将此文件夹初始化为 Nomi 示例项目？\n\n${rootPath}\n\nNomi 会创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/。`,
-                        ),
-                    showMessage: (message, tone) =>
-                        toast(message, tone || "error"),
-                });
-                if (!projectId) return;
-                refreshProjects();
-            } else {
+            try {
                 const project = createLocalProject(example.projectName);
                 projectId = project.id;
+                refreshProjects();
+            } catch (error) {
+                console.error("try-now project error", error);
+                toast("新建示例项目失败，请检查本地磁盘权限", "error");
+                return;
             }
             const hydrated = await hydrateProject(projectId);
             if (!hydrated) return;

@@ -149,9 +149,21 @@ describe("runtime workspace project APIs", () => {
     expect(readProject("delete-legacy-id")).toBeNull();
   });
 
-  it("does not create new desktop projects directly under the default projects root without a rootPath", () => {
-    expect(() => createProject({ name: "No Folder", payload: {} })).toThrow(/rootPath/);
-    expect(fs.existsSync(path.join(mockedDocumentsRoot, "Nomi Projects"))).toBe(false);
+  it("createProject without a rootPath auto-creates a folder under the default projects root", () => {
+    // 「新建项目」入口：不带 rootPath 时不再报错，而是在默认根下自动建项目文件夹，
+    // 复用 workspace 的初始化/注册/资源落盘（这样用户不必每次选文件夹）。
+    const defaultRoot = path.join(mockedDocumentsRoot, "Nomi Projects");
+
+    const created = createProject({ name: "No Folder", payload: { scenes: [] } });
+
+    expect(created).toMatchObject({ name: "No Folder", version: 2, payload: { scenes: [] } });
+    expect(fs.existsSync(defaultRoot)).toBe(true);
+    const summary = listProjects().find((item) => item.id === created.id);
+    expect(summary).toMatchObject({ id: created.id, name: "No Folder", missing: false });
+    const rootPath = summary?.rootPath ?? "";
+    expect(rootPath.startsWith(defaultRoot)).toBe(true);
+    expect(fs.existsSync(workspaceProjectFile(rootPath))).toBe(true);
+    expect(readProject(created.id)).toEqual(created);
   });
 
   it("does not create new fixed-root projects when saving an unknown project id", () => {

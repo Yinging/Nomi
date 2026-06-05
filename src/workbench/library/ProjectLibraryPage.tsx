@@ -231,6 +231,7 @@ export default function ProjectLibraryPage({ onOpenProject, onDeleteProject, onN
             </div>
             <div className="px-[13px] pt-[10px] pb-3">
               <div className="text-[13px] font-medium text-nomi-ink-60 truncate mb-0.5 group-hover:text-nomi-accent">新建项目</div>
+              <div className="text-[11.5px] text-nomi-ink-40 truncate">存到默认位置，立即开始</div>
             </div>
           </button>
 
